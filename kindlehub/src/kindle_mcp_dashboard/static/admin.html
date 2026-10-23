@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>KindleHub 管理后台</title>
+<link rel="stylesheet" href="/static/admin.css">
+</head>
+<body>
+<header>
+  <strong class="brand">KindleHub</strong>
+  <span id="deviceInfo" class="muted"></span>
+  <span id="health" class="health" title="● 正常 / ◐ 过期或无数据 / ○ 未连接"></span>
+  <span class="spacer"></span>
+  <label class="inline">天气城市
+    <input id="city" type="text" placeholder="如 上海" class="short">
+  </label>
+  <label class="inline">刷新间隔
+    <input id="refresh" type="number" min="10" max="3600" step="10"> 秒
+  </label>
+  <button id="save" class="primary">保存</button>
+  <button id="reload">重新载入</button>
+  <button id="export">导出</button>
+  <label class="filebtn">导入<input id="import" type="file" accept="application/json"></label>
+  <span id="status" class="status"></span>
+</header>
+
+<main>
+  <aside class="panel left">
+    <div class="panel-head">
+      <select id="screenSelect" title="当前页面"></select>
+      <button id="addScreen" title="新增页面">+ 页</button>
+      <button id="delScreen" title="删除当前页面">− 页</button>
+    </div>
+    <div class="panel-head">
+      <input id="screenName" placeholder="页面名称" title="页面名称">
+    </div>
+    <ul id="regionList"></ul>
+    <div class="panel-foot">
+      <label class="secret">
+        <span>看板密码</span>
+        <input id="wbPassword" type="password" autocomplete="new-password" placeholder="未设置">
+      </label>
+      <button id="addRegion" class="wide">+ 添加模块</button>
+      <div class="optional" id="optionalBox"></div>
+    </div>
+  </aside>
+
+  <section class="stage">
+    <div id="canvas">
+      <img id="preview" alt="预览">
+      <div id="overlay"></div>
+    </div>
+    <p class="hint">拖动模块移动位置，拖右下角调整大小。松手后自动刷新预览。</p>
+  </section>
+
+  <aside class="panel right">
+    <h2>模块属性</h2>
+    <div id="propBody" class="muted">未选中模块</div>
+  </aside>
+</main>
+
+<script src="/static/admin.js"></script>
+</body>
+</html>

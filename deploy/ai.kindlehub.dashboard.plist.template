@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>ai.kindlehub.dashboard</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>{{ROOT}}/.venv/bin/kindlehub</string>
+        <string>serve</string>
+        <string>--host</string>
+        <string>0.0.0.0</string>
+        <string>--port</string>
+        <string>8787</string>
+        <string>--refresh</string>
+        <string>60</string>
+    </array>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>KINDLE_DASHBOARD_STATE</key>
+        <string>{{ROOT}}/.state/dashboard.json</string>
+        <key>KINDLEHUB_SECRETS</key>
+        <string>{{ROOT}}/.state/secrets.json</string>
+        <key>PATH</key>
+        <string>/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+
+    <key>WorkingDirectory</key>
+    <string>{{ROOT}}</string>
+
+    <!-- 登录即启动 -->
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- 进程退出后自动拉起（崩溃、异常、被误杀都能恢复） -->
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>{{ROOT}}/logs/kindlehub.log</string>
+    <key>StandardErrorPath</key>
+    <string>{{ROOT}}/logs/kindlehub.err.log</string>
+
+    <key>ProcessType</key>
+    <string>Interactive</string>
+</dict>
+</plist>

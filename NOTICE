@@ -1,0 +1,92 @@
+# 第三方代码与许可证声明
+
+本项目包含来自以下开源项目的派生代码，均遵循 MIT 许可证，原始版权声明保留。
+
+---
+
+## codecube/kindle-mcp-dashboard
+
+- 来源：https://github.com/codecube/kindle-mcp-dashboard
+- 锁定版本：`aafc74f035597a1fca8ffd39ce1f4c554e8438c2`
+- 许可证：MIT（见 `kindlehub/LICENSE`，原样保留）
+- 使用方式：`kindlehub/` 整体派生自该项目
+
+### 保留但未启用
+
+`kindlehub/kindle/` 为上游的 EY21 KUAL/Mesquite 客户端脚本，
+仅作参考保留。本项目不启用、不执行、不下发到设备
+（KT2 不需要 USB / KUAL / SSH，也不修改 Kindle 固件）。
+
+### 相对上游的主要改动
+
+**渲染与设备适配**
+
+| 文件 | 改动 |
+|---|---|
+| `defaults.py` | 抽出 `DEVICE_PROFILES`，新增 KT2（600×800）；默认布局按 KT2 画布重排 |
+| `schema.py` | 归一化画布高度改为按设备宽高比推导，非方形屏幕不再纵向压缩 |
+| `renderer.py` | 字体链支持 macOS 中文；坐标等比映射；按像素宽度折行并支持 CJK；16 级灰关闭抖动；字号自动收缩 |
+
+**数据源**
+
+| 文件 | 改动 |
+|---|---|
+| `sources.py` | 日期中文化；新增天气 / 用量 / Agent 监控 / 健康摘要数据源 |
+| `weather.py` | 新增，Open-Meteo 天气 |
+| `workbuddy.py` | 新增，自建网关用量与积分 |
+| `secrets.py` | 新增，密钥与布局配置分离存放 |
+
+**Agent 监控（引擎与适配器解耦）**
+
+| 文件 | 改动 |
+|---|---|
+| `agents.py` | 重写为纯引擎：状态机、排序、格式化，不认识任何具体 Agent |
+| `plugins/__init__.py` | 新增，适配器注册表 |
+| `plugins/codex.py` | 新增，读会话 JSONL 的 task_started / task_complete |
+| `plugins/dsh.py` | 新增，读压缩会话日志的 turn/start 与 turn/end |
+| `plugins/zcode.py` | 新增，读任务索引数据库的 task_status |
+| `plugins/opencode.py` | 新增，读 session 表最后写入时间（仅推测） |
+
+**HTTP 服务**
+
+| 文件 | 改动 |
+|---|---|
+| `web.py` | 移除 `object-fit` 依赖；`/api/*` 仅本机；HTTP/1.1；后台预热；渲染缓存；设备能力上报；JS 可用时局部刷图 |
+| `static/` | 新增，管理后台（原生 JS，无构建） |
+
+---
+
+## zihengjackchen/kindle-dashboard
+
+- 来源：https://github.com/zihengjackchen/kindle-dashboard
+- 参考版本：`5708181997c6afba181e8dfcc68ed319a3f904e3`
+- 许可证：MIT
+- 当前状态：**仅借鉴交互设计，未复制代码**
+
+### 借鉴的部分
+
+`server/app/preview.html` 与 `server/app/editor.js` 的编辑器布局
+（左侧模块列表 / 中间预览 / 右侧属性面板）与"改完即预览"的交互模式，
+作为本项目 `static/` 的设计参考。代码按本项目的 region 数据模型重写。
+
+其 `editor.js` 使用的可选链、`replaceAll`、CSS Grid 等特性
+仅运行于 Mac 浏览器，不会下发到 Kindle。
+
+### 明确不引入
+
+- `kindle-client/`（KUAL / Mesquite / BusyBox httpd，含 GPL-2.0 组件）
+- `collect.py`（TrueNAS / Finnhub / TwelveData 等 NAS 与行情采集）
+- `scripts/`、`brag-output/`、TrueNAS compose 配置
+
+---
+
+## 依赖许可证
+
+| 包 | 许可证 |
+|---|---|
+| mcp | MIT |
+| Pillow | MIT-CMU |
+| psutil | BSD-3-Clause |
+| pydantic / starlette / uvicorn / httpx（传递依赖） | MIT / BSD-3-Clause |
+
+运行时无 GPL / AGPL 依赖。

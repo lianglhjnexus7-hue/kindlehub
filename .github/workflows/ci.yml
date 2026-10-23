@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e kindlehub
+          pip install pytest
+      - name: Test
+        run: pytest kindlehub -q
+
+  secrets-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Scan for accidental secrets and personal data
+        run: |
+          # kindlehub/kindle/ 是上游保留的参考脚本，含文档用占位 IP，排除在外
+          FILES=$(git ls-files | grep -v "^kindlehub/kindle/")
+          fail=0
+
+          echo "== 运行时状态不应被跟踪 =="
+          if echo "$FILES" | grep -E "^\.state/|secrets\.json$"; then
+            echo "::error::.state/ 或 secrets.json 被跟踪了"; fail=1
+          fi
+
+          echo "== 个人绝对路径 =="
+          if echo "$FILES" | xargs grep -lE "/Users/[a-z]|/home/[a-z]" 2>/dev/null; then
+            echo "::error::发现个人绝对路径"; fail=1
+          fi
+
+          echo "== 局域网 IP（排除上游参考脚本）=="
+          if echo "$FILES" | xargs grep -lE "\b(10|192\.168|172\.(1[6-9]|2[0-9]|3[01]))\.[0-9]+\.[0-9]+\b" 2>/dev/null; then
+            echo "::error::发现局域网 IP"; fail=1
+          fi
+
+          echo "== 密钥字面量 =="
+          if echo "$FILES" | xargs grep -lEi "(password|secret|api[_-]?key)[\"\x27]?[[:space:]]*[:=][[:space:]]*[\"\x27][^\"\x27]{12,}" 2>/dev/null; then
+            echo "::error::发现疑似密钥"; fail=1
+          fi
+
+          if [ "$fail" = "1" ]; then exit 1; fi
+          echo "全部通过"
