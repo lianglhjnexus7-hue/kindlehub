@@ -1,0 +1,58 @@
+{
+	"items": [
+	{
+		"name": "KindleHub",
+		"priority": 1,
+		"items": [
+		{
+			"name": "启动 (Start)",
+			"action": "./bin/kindlehub.sh",
+			"params": "start",
+			"exitmenu": false,
+			"refresh": false,
+			"internal": "status 启动后台刷新循环并禁止屏保"
+		},
+		{
+			"name": "停止 (Stop)",
+			"action": "./bin/kindlehub.sh",
+			"params": "stop",
+			"exitmenu": false,
+			"refresh": false,
+			"internal": "status 停止刷新循环并恢复屏保"
+		},
+		{
+			"name": "重启 (Restart)",
+			"action": "./bin/kindlehub.sh",
+			"params": "restart",
+			"exitmenu": true,
+			"refresh": false,
+			"internal": "status 重启刷新循环"
+		},
+		{
+			"name": "立即刷新一次",
+			"action": "./bin/kindlehub.sh",
+			"params": "once",
+			"exitmenu": false,
+			"refresh": false,
+			"internal": "status 手动刷新一帧"
+		},
+		{
+			"name": "查看状态",
+			"action": "./bin/kindlehub.sh",
+			"params": "status",
+			"exitmenu": false,
+			"refresh": false,
+			"internal": "status 显示运行状态与配置"
+		},
+		{
+			"name": "关于",
+			"action": "./bin/kindlehub.sh",
+			"params": "version",
+			"exitmenu": false,
+			"refresh": false,
+			"internal": "status KindleHub 版本信息"
+		}
+		]
+	}
+	]
+}

@@ -92,17 +92,9 @@ def state() -> AgentState:
     out.last_activity = newest_mtime
     age = now - newest_mtime
 
-    names: list[str] = []
-    for name, _s, _p in active:
-        label = _project_name(name) or name
-        if label and label not in names:
-            names.append(label)
-    if not names:
-        names = [_project_name(project_dir) or project_dir]
-    out.project = "、".join(names[:2])
+    # 项目与任务必须来自同一个会话，否则会出现"项目 A + 任务 B"的错配
+    out.project = _project_name(project_dir) or project_dir
     out.sessions = len(active) or 1
-    if len(names) > 2:
-        out.task = f"共 {len(names)} 个项目活跃"
 
     events = _read_events(path)
     turn_open = waiting = False
@@ -138,7 +130,11 @@ def state() -> AgentState:
         if event.get("type") == "session/title":
             data = event.get("data")
             title = data.get("title") if isinstance(data, dict) else None
-            out.task = _short(title)
+            # 有些会话的"标题"其实是用户输入的第一句 prompt，
+            # 直接显示会把对话内容带上墙，这类一律不显示。
+            text = str(title or "").strip()
+            if text and not text.startswith(("你", "请", "帮我", "我们", "这是", "现在")):
+                out.task = _short(title)
             break
     return out
 

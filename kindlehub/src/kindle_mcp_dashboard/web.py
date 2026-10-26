@@ -24,6 +24,7 @@ from . import agents, secrets, weather, workbuddy
 from .defaults import DEVICE_PROFILES, OPTIONAL_REGIONS
 from .renderer import render_png
 from .schema import DashboardError, validate_dashboard
+from .sources import snapshot
 from .store import DashboardStore
 
 WARM_INTERVAL = 25   # 后台采集间隔（秒）：Agent 状态 15-30 秒一采，屏幕 5-10 分钟一刷
@@ -117,10 +118,18 @@ def make_server(host: str = "0.0.0.0", port: int = 8787, refresh: int = 60,
             elif path == "/screen.png":
                 if self.client_address[0] not in LOOPBACK:
                     _last_seen.update({"at": time.time(), "ip": self.client_address[0]})
+                # Kindle 端通过 batt/chg 传电量，用于自绘状态栏
+                q = urllib.parse.parse_qs(urlparse(self.path).query)
+                extra = {}
+                batt = (q.get("batt") or [""])[0]
+                if batt.isdigit():
+                    extra["system.battery"] = int(batt)
+                    extra["system.charging"] = (q.get("chg") or ["0"])[0] in {"1", "true"}
+                draw_bar = (q.get("bar") or ["1"])[0] not in {"0", "false"}
                 # 局部刷新（JS）带 _= 序号参数，明确要求新图；
                 # 整页重载不带，仍走 45 秒渲染缓存。
-                if "cache=0" in urlparse(self.path).query:
-                    self._send(HTTPStatus.OK, "image/png", self._render(store))
+                if extra or not draw_bar or "cache=0" in urlparse(self.path).query:
+                    self._send(HTTPStatus.OK, "image/png", self._render(store, extra, draw_bar))
                 else:
                     self._send(HTTPStatus.OK, "image/png", self._render_cached(store))
             elif path == "/health":
@@ -256,10 +265,20 @@ def make_server(host: str = "0.0.0.0", port: int = 8787, refresh: int = 60,
             _render_cache.update({"data": png, "at": now})
             return png
 
-        def _render(self, store: DashboardStore) -> bytes:
-            """渲染失败时回退到上一张成功的图，绝不让设备拿到错误页。"""
+        def _render(self, store: DashboardStore, extra: dict | None = None,
+                    draw_bar: bool = True) -> bytes:
+            """渲染失败时回退到上一张成功的图，绝不让设备拿到错误页。
+
+            extra 用于注入设备侧传来的实时值（如电量），让自绘状态栏有数据。
+            """
             try:
-                png = render_png(store.read(), fetch=False)
+                data = store.read()
+                if extra:
+                    live = snapshot(data.get("settings"), fetch=False)
+                    live.update(extra)
+                    png = render_png(data, live, fetch=False, draw_bar=draw_bar)
+                else:
+                    png = render_png(data, fetch=False, draw_bar=draw_bar)
             except Exception as exc:  # noqa: BLE001
                 print(f"渲染失败: {type(exc).__name__}: {exc}", flush=True)
                 if _last_png["data"]:
@@ -345,7 +364,7 @@ def _page(refresh: int, device: dict) -> str:
       var timer = null, seq = 0, broken = 0;
       function stamp() {
         seq += 1;
-        return "/screen.png?cache=0&_=" + seq + "&" + (new Date()).getTime();
+        return "/screen.png?cache=0&bar=0&_=" + seq + "&" + (new Date()).getTime();
       }
       function load() {
         broken = 0;
@@ -395,5 +414,5 @@ def _page(refresh: int, device: dict) -> str:
 <title>KindleHub</title>
 <style>html,body{{margin:0;padding:0;background:#fff;overflow:hidden}}
 img{{display:block;max-width:100%;height:auto}}</style>
-</head><body><img src="/screen.png" width="{width}" height="{height}" alt="Dashboard">
+</head><body><img src="/screen.png?bar=0" width="{width}" height="{height}" alt="Dashboard">
 <script>{js}</script></body></html>"""

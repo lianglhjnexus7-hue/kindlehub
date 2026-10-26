@@ -64,7 +64,8 @@ def test_display_page_refreshes_and_is_webkit533_safe(server):
     assert headers["Content-Type"].startswith("text/html")
     assert 'http-equiv="refresh"' in html
     assert "object-fit" not in html                # WebKit 533 不支持
-    assert 'src="/screen.png"' in html
+    # 浏览器模式要请求不带自绘状态栏的图（Kindle 自己有系统状态栏，重复不好看）
+    assert 'src="/screen.png?bar=0"' in html
 
 
 def test_page_js_is_es3_safe_for_webkit533(server):

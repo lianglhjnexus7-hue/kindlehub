@@ -18,8 +18,13 @@ class DashboardError(ValueError):
 
 
 def canvas_height(device: dict[str, Any]) -> float:
-    """归一化画布高度：宽度固定 1000，高度按设备长宽比推导。"""
-    return CANVAS_WIDTH * device["height"] / device["width"]
+    """归一化画布高度：宽度固定 1000，高度按可用区域的长宽比推导。
+
+    top_inset 是留给 Kindle 系统状态栏的像素高度（状态栏会覆盖屏幕顶部，
+    且无法通过 lipc 关闭），内容从这个偏移之下开始排布。
+    """
+    usable = device["height"] - int(device.get("top_inset", 0) or 0)
+    return CANVAS_WIDTH * usable / device["width"]
 
 
 def validate_dashboard(value: dict[str, Any]) -> dict[str, Any]:

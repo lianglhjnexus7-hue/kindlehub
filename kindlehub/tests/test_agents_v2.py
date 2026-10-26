@@ -127,14 +127,15 @@ def test_compact_row_for_idle_agent():
             "sessions": 1}]
     text = agents.format_rows(rows)
     assert text.count("\n") == 0, "空闲 Agent 应压缩为一行"
-    assert "最近活动" in text
+    assert "空闲" in text and "demo" in text
 
 
-def test_active_row_shows_project_and_basis():
+def test_active_row_shows_project_and_task():
+    """活跃 Agent 显示两行：状态行 + 项目·任务行。依据不进屏幕。"""
     rows = [{"agent": "D", "status": "running", "project": "demo", "task": "跑测试",
             "last_activity": time.time(), "confidence": "high",
             "basis": "turn 未配对", "sessions": 1}]
     text = agents.format_rows(rows)
-    assert "项目 demo · 跑测试" in text
-    assert "[确证]" in text
-    assert "最近活动" in text
+    assert text.startswith("● D · 执行中")
+    assert "demo · 跑测试" in text
+    assert "turn 未配对" not in text, "依据不应出现在屏幕上"

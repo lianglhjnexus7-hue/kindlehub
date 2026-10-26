@@ -275,7 +275,7 @@ def models(settings: dict[str, Any], fetch: bool = True, force: bool = False,
 
     span = str((settings.get("workbuddy") or {}).get("range") or DEFAULT_RANGE)
     period = RANGE_CN.get(span, span)
-    lines = [f"统计周期：{period}"]
+    lines = [f"统计周期：{period}", ""]
     for _tokens, name, window in rows[:limit]:
         requests = int(window.get("requests") or 0)
         total = window.get("total_tokens") or 0
@@ -293,8 +293,6 @@ def models(settings: dict[str, Any], fetch: bool = True, force: bool = False,
         else:
             parts.append("费用未计价")
 
-        if lines:
-            lines.append("")  # 模型之间留一个空行，分组更清楚
         lines.append(name)
         lines.append(" · ".join(parts))
 

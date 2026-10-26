@@ -36,6 +36,8 @@ def _cpu_percent() -> int:
 def snapshot(settings: dict[str, Any] | None = None, fetch: bool = True) -> dict[str, Any]:
     now = dt.datetime.now().astimezone()
     settings = settings or {}
+    # 只采集一次，两个视图（按 Agent / 按项目）共用，避免重复读盘
+    agent_rows = agents.collect(settings)
     return {
         "system.time": now.strftime("%H:%M"),
         "system.date": f"{_WEEKDAYS[now.weekday()]}\n{now.month}月{now.day}日",
@@ -52,7 +54,8 @@ def snapshot(settings: dict[str, Any] | None = None, fetch: bool = True) -> dict
         "workbuddy.usage": workbuddy.current(settings, fetch=fetch),
         "workbuddy.models": workbuddy.models(settings, fetch=fetch),
         "workbuddy.models_detail": workbuddy.models_detail(settings, fetch=fetch),
-        "agents.summary": agents.format_rows(agents.collect(settings)),
+        "agents.summary": agents.format_rows(agent_rows),
+        "projects.summary": agents.format_by_project(agent_rows),
         # 数据健康摘要：让屏幕能自证新鲜度，采集失败时明说
         "system.health": health_summary(settings),
     }

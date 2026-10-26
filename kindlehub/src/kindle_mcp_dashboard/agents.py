@@ -138,7 +138,7 @@ def _project_name(path: str | None) -> str | None:
 _MD = re.compile(r"(\*\*|__|`|^#+\s*|^[-*]\s+)")
 
 
-def _short(text: str | None, limit: int = 22) -> str | None:
+def _short(text: str | None, limit: int = 20) -> str | None:
     if not text:
         return None
     text = _MD.sub("", str(text))
@@ -169,39 +169,100 @@ def _clock(epoch: float | None) -> str:
 
 # ---------------------------------------------------------------- 屏幕格式化
 
-def format_rows(rows: list[dict[str, Any]], hide_unknown: bool = False) -> str:
-    """活跃 Agent 显示完整信息（项目 + 任务 + 最近活动 + 依据），
-    空闲/未知的压缩成一行。时间一律标注为"最近活动"，避免误读成任务开始时间。
+def format_rows(rows: list[dict[str, Any]], hide_unknown: bool = False,
+                max_idle: int = 3) -> str:
+    """屏幕上显示成：活跃的 2 行（状态行 + 项目·任务），空闲的 1 行。
+
+    时间放状态栏了，这里不再重复；依据与置信度留在后台和 API 里，
+    屏幕只回答"谁在干活、在干什么"。
+
+    Agent 超过 max_idle 个空闲时，多余的空闲/未知收成一行，
+    避免行数溢出把内容截断。活跃的始终全部展开。
     """
     lines: list[str] = []
-    for row in rows:
-        status = row["status"]
-        if hide_unknown and status in {"unknown", "disconnected"}:
-            continue
-        mark = STATUS_MARK.get(status, "?")
-        age = (time.time() - row["last_activity"]) if row.get("last_activity") else None
-        stamp = f"最近活动 {_clock(row['last_activity'])}（{_ago(age)}）" if age is not None else "无活动记录"
 
-        if status in ACTIVE:
-            lines.append(f"{mark} {row['agent']} · {STATUS_CN.get(status, status)} · {stamp}")
-            project = row.get("project")
-            task = row.get("task")
-            # 多项目同时活跃时，会话标题只属于其中一个，混写会误导
-            if project and "、" in str(project):
-                task = None
-            detail = [x for x in (project, task) if x]
-            if detail:
-                lines.append("   项目 " + " · ".join(detail))
-            if row.get("sessions", 1) > 1:
-                lines.append(f"   {row['sessions']} 个会话同时活跃")
-            basis = row.get("basis")
-            if basis:
-                conf = CONFIDENCE_CN.get(row.get("confidence"), "")
-                lines.append(f"   [{conf}] {basis}")
-        else:
-            project = row.get("project") or "—"
-            lines.append(f"{mark} {row['agent']} · {STATUS_CN.get(status, status)} · {project} · {stamp}")
+    active_rows = [r for r in rows if r["status"] in ACTIVE]
+    idle_rows = [r for r in rows if r["status"] not in ACTIVE]
+    if hide_unknown:
+        idle_rows = [r for r in idle_rows
+                     if r["status"] not in {"unknown", "disconnected"}]
+
+    for row in active_rows:
+        state_cn = STATUS_CN.get(row["status"], row["status"])
+        mark = STATUS_MARK.get(row["status"], "?")
+        project = row.get("project")
+        task = row.get("task")
+        if project and "、" in str(project):
+            project = str(project).split("、")[0]
+        lines.append(f"{mark} {row['agent']} · {state_cn}")
+        detail = [x for x in (project, task) if x]
+        if detail:
+            lines.append("   " + " · ".join(detail))
+
+    for row in idle_rows[:max_idle]:
+        state_cn = STATUS_CN.get(row["status"], row["status"])
+        mark = STATUS_MARK.get(row["status"], "?")
+        project = row.get("project") or "—"
+        age = row.get("last_activity")
+        when = f" · {_ago(time.time() - age)}" if age else ""
+        lines.append(f"{mark} {row['agent']} · {state_cn} · {project}{when}")
+
+    hidden = idle_rows[max_idle:]
+    if hidden:
+        names = "、".join(str(r["agent"]) for r in hidden[:3])
+        suffix = f" 等 {len(hidden)} 个" if len(hidden) > 3 else ""
+        lines.append("… 另有 " + names + suffix)
+
     return "\n".join(lines) if lines else "未发现 Agent"
+
+
+def format_by_project(rows: list[dict[str, Any]],
+                      max_projects: int = 6) -> str:
+    """按项目聚合：一个项目一行，多个 Agent 在同一个项目时才展开明细。
+
+    和 format_rows 的区别是视角——这里回答"哪个项目在推进"，
+    而不是"哪个软件在跑"。同时推进多个项目时更省行数。
+    """
+    groups: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        project = str(row.get("project") or "—").split("、")[0]
+        groups.setdefault(project, []).append(row)
+
+    def sort_key(item):
+        _name, members = item
+        has_active = any(m["status"] in ACTIVE for m in members)
+        newest = max((m.get("last_activity") or 0) for m in members)
+        return (0 if has_active else 1, -newest)
+
+    lines: list[str] = []
+    for project, members in sorted(groups.items(), key=sort_key)[:max_projects]:
+        active = [m for m in members if m["status"] in ACTIVE]
+        idle = [m for m in members if m["status"] not in ACTIVE]
+
+        if active:
+            names = "、".join(str(m["agent"]) for m in active)
+            if len(active) == 1:
+                # 任务标题单独一行，否则「项目 + Agent + 任务」会超出屏幕宽度换行
+                lines.append("● " + project + " · " + names + " 在跑")
+                task = active[0].get("task")
+                if task:
+                    lines.append("   " + str(task))
+            else:
+                lines.append("● " + project + " · " + str(len(active)) + " 个在跑（" + names + "）")
+                for m in active:
+                    task = m.get("task")
+                    detail = "   " + str(m["agent"])
+                    if task:
+                        detail += " · " + str(task)
+                    lines.append(detail)
+        else:
+            newest = max(members, key=lambda x: x.get("last_activity") or 0)
+            age = newest.get("last_activity")
+            when = " · " + _ago(time.time() - age) if age else ""
+            names = "、".join(str(m["agent"]) for m in idle)
+            lines.append("○ " + project + " · " + names + " · 空闲" + when)
+
+    return "\n".join(lines) if lines else "未发现项目"
 
 
 # ---------------------------------------------------------------- 汇总

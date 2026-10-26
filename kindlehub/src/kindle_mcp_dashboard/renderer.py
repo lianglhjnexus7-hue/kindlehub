@@ -47,54 +47,127 @@ _NO_LINE_START = "，。、；：！？）》」』】%…,.;:!?)]}"
 
 
 def render_dashboard(data: dict[str, Any], values: dict[str, Any] | None = None,
-                     fetch: bool = True) -> Image.Image:
+                     fetch: bool = True, draw_bar: bool = True) -> Image.Image:
     width, height = data["device"]["width"], data["device"]["height"]
+    # top_inset 是顶部状态栏高度。图片输出整屏（600x800），状态栏由我们自己画，
+    # 内容整体下移 inset，实现完全接管屏幕（Kindle 系统栏不再参与）。
+    inset = int(data["device"].get("top_inset", 0) or 0)
     image = Image.new("L", (width, height), 255)
     draw = ImageDraw.Draw(image)
     screen = next(item for item in data["screens"] if item["id"] == data["active_screen"])
     live = values or snapshot(data.get("settings"), fetch=fetch)
     scale = width / CANVAS_WIDTH
+    if inset > 0 and draw_bar:
+        _draw_status_bar(draw, width, inset, live)
     for region in screen["regions"]:
         if region["kind"] == "image":
-            _draw_image(image, region, width, height, scale)
+            _draw_image(image, region, width, height, scale, inset)
         else:
-            _draw_region(draw, region, live, width, height, scale)
+            _draw_region(draw, region, live, width, height, scale, inset)
     # 量化到面板的 16 级灰；关闭抖动，e-ink 上抖动会显脏。
     return image.quantize(colors=16, dither=Image.Dither.NONE).convert("L")
 
 
 def render_png(data: dict[str, Any], values: dict[str, Any] | None = None,
-               fetch: bool = True) -> bytes:
+               fetch: bool = True, draw_bar: bool = True) -> bytes:
     buffer = io.BytesIO()
-    render_dashboard(data, values, fetch=fetch).save(buffer, format="PNG", optimize=True)
+    render_dashboard(data, values, fetch=fetch, draw_bar=draw_bar).save(buffer, format="PNG", optimize=True)
     return buffer.getvalue()
 
 
-def _box(region: dict[str, Any], scale: float) -> tuple[int, int, int, int]:
-    """等比映射：x/y/w/h 统一乘以 scale，保证像素长宽比与设备一致。"""
+def _draw_status_bar(draw: ImageDraw.ImageDraw, width: int, height_inset: int,
+                     values: dict[str, Any]) -> None:
+    """自己画顶部状态栏：左边时间 + 10 格电量条，右侧留白。
+
+    为什么内容都靠左：Kindle 的 framework 会不定时重绘系统状态栏，
+    它把时间/电池画在右上角。如果我们也把电量放右边，就会被盖住。
+    所以右侧整块让给它，我们的信息全放在左半部分。
+    """
+    draw.rectangle((0, 0, width, height_inset), fill=255)
+
+    pad = max(10, round(width * 0.02))
+    y_text = max(2, (height_inset - 24) // 2)
+
+    # 系统状态栏已被压制（suppress_statusbar），所以时间必须自己画
+    cursor = pad
+    clock = str(values.get("system.time", ""))
+    if clock:
+        font = _font(24, bold=True)
+        draw.text((cursor, max(2, (height_inset - 30) // 2)), clock, font=font, fill=0)
+        cursor += round(draw.textlength(clock, font=font)) + 18
+
+    # 天气摘要紧跟其后
+    weather_text = (str(values.get("weather.current") or "").splitlines() or [""])[0].strip()
+    if weather_text:
+        text = weather_text[:14]
+        font = _font(19, bold=True)
+        draw.text((cursor, max(3, (height_inset - 24) // 2)), text, font=font, fill=0)
+        cursor += round(draw.textlength(text, font=font)) + 20
+
+    battery = values.get("system.battery")
+    if battery is None:
+        return
+    try:
+        level = max(0, min(100, int(battery)))
+    except (TypeError, ValueError):
+        return
+    charging = bool(values.get("system.charging"))
+
+    cells, cell_w, cell_h, gap = 10, 16, 20, 3
+    y0 = max(2, (height_inset - cell_h) // 2)
+    filled = max(1, int(round(level / 10.0))) if level > 0 else 0
+
+    for i in range(cells):
+        x = cursor + i * (cell_w + gap)
+        box = (x, y0, x + cell_w, y0 + cell_h)
+        if i < filled:
+            draw.rectangle(box, fill=0)
+        else:
+            draw.rectangle(box, outline=0, width=2)
+    cursor += cells * cell_w + (cells - 1) * gap + 10
+
+    label = str(level) + "%"
+    font = _font(19, bold=True)
+    draw.text((cursor, y_text), label, font=font, fill=0)
+    cursor += round(draw.textlength(label, font=font))
+
+    if charging:
+        cursor += 18
+        ly = y0 + 1
+        draw.line((cursor + 5, ly, cursor, ly + 8), fill=0, width=3)
+        draw.line((cursor, ly + 8, cursor + 6, ly + 8), fill=0, width=3)
+        draw.line((cursor + 6, ly + 8, cursor + 1, ly + 16), fill=0, width=3)
+
+
+def _box(region: dict[str, Any], scale: float,
+         inset: int = 0) -> tuple[int, int, int, int]:
+    """等比映射：x/y/w/h 统一乘以 scale，保证像素长宽比与设备一致。
+
+    inset 是顶部状态栏占用的像素高度，所有内容整体下移这么多。
+    """
     return (
         round(region["x"] * scale),
-        round(region["y"] * scale),
+        inset + round(region["y"] * scale),
         round(region["w"] * scale),
         round(region["h"] * scale),
     )
 
 
 def _draw_region(draw: ImageDraw.ImageDraw, region: dict[str, Any], values: dict[str, Any],
-                 width: int, height: int, scale: float) -> None:
-    x, y, w, h = _box(region, scale)
+                 width: int, height: int, scale: float, inset: int = 0) -> None:
+    x, y, w, h = _box(region, scale, inset)
     has_label = bool(str(region.get("label", "")).strip())
     # 无标题的窄条（如底部健康栏）不该按卡片标准扣内边距，
     # 否则可用高度被 pad 吃光，一行都画不出来。
     pad = max(9, round(min(width, height) * 0.022)) if has_label else max(3, round(min(width, height) * 0.008))
     if region.get("border", True):
         radius = max(4, round(min(width, height) * 0.009))
-        draw.rounded_rectangle((x, y, x + w, y + h), radius=radius, outline=30, width=2)
+        draw.rounded_rectangle((x, y, x + w, y + h), radius=radius, outline=0, width=2)
     if region.get("invert"):
         draw.rectangle((x, y, x + w, y + h), fill=20)
         fg, muted = 255, 205
     else:
-        fg, muted = 15, 85
+        fg, muted = 0, 60
     label = str(region.get("label", ""))
     cursor_y = y + pad
     if has_label:
@@ -132,9 +205,9 @@ def _draw_region(draw: ImageDraw.ImageDraw, region: dict[str, Any], values: dict
         draw.text((content_x, cursor_y), f"{percent:.0f}%", font=value_font, fill=fg)
         bar_h = max(12, round(height * 0.022))
         bar_y = y + h - pad - bar_h
-        draw.rectangle((x + pad, bar_y, x + w - pad, bar_y + bar_h), outline=fg, width=2)
+        draw.rectangle((x + pad, bar_y, x + w - pad, bar_y + bar_h), outline=0, width=2)
         fill_w = round((w - pad * 2 - 6) * percent / 100)
-        draw.rectangle((x + pad + 3, bar_y + 3, x + pad + 3 + fill_w, bar_y + bar_h - 3), fill=fg)
+        draw.rectangle((x + pad + 3, bar_y + 3, x + pad + 3 + fill_w, bar_y + bar_h - 3), fill=0)
     elif kind == "list":
         items = region.get("items", value if isinstance(value, list) else [value])
         item_font = _font(int(region.get("size", 23)))
@@ -150,12 +223,12 @@ def _draw_region(draw: ImageDraw.ImageDraw, region: dict[str, Any], values: dict
             if status in {"ok", "online", "healthy", "running"}:
                 draw.ellipse(marker_box, fill=fg)
             else:
-                draw.ellipse(marker_box, outline=fg, width=2)
+                draw.ellipse(marker_box, outline=0, width=2)
             draw.text((x + pad + 24, row_y), text, font=item_font, fill=fg)
 
 
 def _draw_image(image: Image.Image, region: dict[str, Any], width: int, height: int,
-                scale: float) -> None:
+                scale: float, inset: int = 0) -> None:
     """绘制本地图片素材，等比缩放后居中放进 region。"""
     path = region.get("image") or region.get("path")
     if not isinstance(path, str) or not path:
@@ -168,7 +241,7 @@ def _draw_image(image: Image.Image, region: dict[str, Any], width: int, height: 
         bbox = ImageOps.invert(source).getbbox()
         if bbox:
             source = source.crop(bbox)
-    x, y, w, h = _box(region, scale)
+    x, y, w, h = _box(region, scale, inset)
     pad = max(6, round(min(width, height) * 0.012))
     target_w, target_h = max(1, w - pad * 2), max(1, h - pad * 2)
     fitted = ImageOps.contain(source, (target_w, target_h))

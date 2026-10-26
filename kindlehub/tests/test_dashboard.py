@@ -108,9 +108,9 @@ def test_wrap_respects_pixel_width():
 def test_store_updates_region_atomically(tmp_path):
     store = DashboardStore(tmp_path / "state.json")
     store.write(DEFAULT_DASHBOARD)
-    store.update_region("overview", "clock", {"label": "现在时间"})
-    clock = next(r for r in store.active_screen()["regions"] if r["id"] == "clock")
-    assert clock["label"] == "现在时间"
+    store.update_region("overview", "agents", {"label": "现在谁在忙"})
+    agents_region = next(r for r in store.active_screen()["regions"] if r["id"] == "agents")
+    assert agents_region["label"] == "现在谁在忙"
 
 
 def test_rejects_out_of_bounds_region():

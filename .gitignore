@@ -28,3 +28,16 @@ internal/
 .DS_Store
 .idea/
 .vscode/
+# Kindle 备份（含用户的电子书，体积大且私密，绝不入库）
+kindlehub/.backup/
+*.backup/
+
+# 发布仓库是独立 git 仓库，不并入主仓库
+.release/
+
+# 内部运维文档（含绝对路径与个人流程）
+internal/
+
+# Kindle 挂载点残留
+.Trashes/
+._*

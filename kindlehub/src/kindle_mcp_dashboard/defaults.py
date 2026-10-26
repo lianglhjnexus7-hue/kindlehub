@@ -21,6 +21,10 @@ DEVICE_PROFILES = {
         "width": 600,
         "height": 800,
         "grayscale": 16,
+        # Kindle 系统状态栏会覆盖顶部约 40px 且无法用 lipc 关闭。
+        # 服务端把状态栏画进图片（天气摘要 + 10 格电量）、eips 全屏接管，
+        # 所以这里的 inset 是"自绘状态栏的高度"，不是让出去的区域。
+        "top_inset": 40,
     },
     "ey21": {
         "model": "Amazon Kindle Paperwhite EY21",
@@ -48,6 +52,10 @@ OPTIONAL_REGIONS = {
         "id": "wb-usage", "kind": "metric", "x": 20, "y": 840, "w": 960, "h": 300,
         "label": "用量总量", "source": "workbuddy.usage", "head_size": 34, "size": 20,
     },
+    "projects.summary": {
+        "id": "projects", "kind": "text", "x": 20, "y": 20, "w": 960, "h": 520,
+        "label": "项目视图", "source": "projects.summary", "size": 19,
+    },
     "workbuddy.models_detail": {
         "id": "wb-detail", "kind": "text", "x": 20, "y": 840, "w": 960, "h": 390,
         "label": "模型消耗 · 详细", "source": "workbuddy.models_detail", "size": 16,
@@ -65,7 +73,7 @@ DEFAULT_DASHBOARD = {
         "weather": {"city": ""},
         # 模型用量看板。不需要就保持 enabled=False，相关模块也不会显示。
         # 密码不放这里，见 secrets.json。
-        "workbuddy": {"url": "http://127.0.0.1:8788", "enabled": False},
+        "workbuddy": {"url": "http://127.0.0.1:8788", "enabled": True},
     },
     "device": dict(DEVICE_PROFILES[DEFAULT_DEVICE]),
     "active_screen": "overview",
@@ -74,15 +82,15 @@ DEFAULT_DASHBOARD = {
             "id": "overview",
             "name": "总览",
             "regions": [
-                # 时间与日期：任何人都有的信息
-                {"id": "clock", "kind": "metric", "x": 20, "y": 20, "w": 960, "h": 200,
-                 "label": "本地时间", "source": "system.clock", "head_size": 64, "size": 22},
-                # Agent 是主角：活跃的显示项目+任务+依据，空闲的压成一行
-                {"id": "agents", "kind": "text", "x": 20, "y": 250, "w": 960, "h": 800,
-                 "label": "AGENT 监控", "source": "agents.summary", "size": 18},
+                # 天气摘要放在状态栏里了（服务端自绘），这里不再重复
+                {"id": "agents", "kind": "text", "x": 20, "y": 20, "w": 960, "h": 520,
+                 "label": "AGENT 监控", "source": "agents.summary", "size": 19},
+                # 模型消耗：次数/Token/费用 + 分区积分
+                {"id": "wb-models", "kind": "text", "x": 20, "y": 560, "w": 960, "h": 570,
+                 "label": "模型消耗 · 按模型", "source": "workbuddy.models", "size": 16},
                 # 数据新鲜度与采集异常自证
-                {"id": "health", "kind": "text", "x": 20, "y": 1120, "w": 960, "h": 70,
-                 "label": "", "border": False, "source": "system.health", "size": 15,
+                {"id": "health", "kind": "text", "x": 20, "y": 1150, "w": 960, "h": 70,
+                 "label": "", "border": False, "source": "system.health", "size": 14,
                  "align": "center"},
             ],
         }
