@@ -130,12 +130,16 @@ def test_compact_row_for_idle_agent():
     assert "空闲" in text and "demo" in text
 
 
-def test_active_row_shows_project_and_task():
-    """活跃 Agent 显示两行：状态行 + 项目·任务行。依据不进屏幕。"""
+def test_active_row_shows_project_only():
+    """活跃 Agent 显示两行：状态行 + 项目行。
+
+    任务标题不上屏幕（太长、常换行），依据与置信度只留在 API 里。
+    """
     rows = [{"agent": "D", "status": "running", "project": "demo", "task": "跑测试",
             "last_activity": time.time(), "confidence": "high",
             "basis": "turn 未配对", "sessions": 1}]
     text = agents.format_rows(rows)
     assert text.startswith("● D · 执行中")
-    assert "demo · 跑测试" in text
+    assert "demo" in text
+    assert "跑测试" not in text, "任务标题不应上屏幕"
     assert "turn 未配对" not in text, "依据不应出现在屏幕上"

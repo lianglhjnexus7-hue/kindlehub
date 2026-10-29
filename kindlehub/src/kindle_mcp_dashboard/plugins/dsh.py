@@ -61,7 +61,7 @@ def os_size(path: Path) -> int:
 
 
 def state() -> AgentState:
-    out = AgentState(agent="DSH", source="session_event")
+    out = AgentState(agent="DSH harness", source="session_event")
     if not DSH_SESSIONS.is_dir():
         out.status = "disconnected"
         return out
@@ -92,8 +92,15 @@ def state() -> AgentState:
     out.last_activity = newest_mtime
     age = now - newest_mtime
 
-    # 项目与任务必须来自同一个会话，否则会出现"项目 A + 任务 B"的错配
-    out.project = _project_name(project_dir) or project_dir
+    # 多个项目同时活跃时用 / 分隔（第一个是主项目，任务标题对应它）
+    names: list[str] = []
+    for name, _stamp, _p in active:
+        label = _project_name(name) or name
+        if label and label not in names:
+            names.append(label)
+    if not names:
+        names = [_project_name(project_dir) or project_dir]
+    out.project = "/".join(names)
     out.sessions = len(active) or 1
 
     events = _read_events(path)
@@ -139,4 +146,4 @@ def state() -> AgentState:
     return out
 
 
-register("DSH", state)
+register("DSH harness", state)

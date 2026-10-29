@@ -144,17 +144,24 @@ def test_zcode_disconnects_when_db_missing(tmp_path, monkeypatch):
     assert state.status == "disconnected"
 
 
-def test_zcode_maps_task_status(tmp_path, monkeypatch):
+def _zcode_db(tmp_path, task_status: str, meta_status: str):
+    """建一个最小可用的 ZCode 任务库。"""
     import sqlite3
     db = tmp_path / "tasks.sqlite"
     con = sqlite3.connect(db)
     con.execute("create table tasks (workspace_path text, title text, task_status text,"
-                " updated_at text, model text, deleted integer)")
-    con.execute("insert into tasks values (?, ?, ?, ?, ?, 0)",
-                ("<HOME>/alice/Projects/demo", "跑测试", "completed",
-                 str(int((time.time() - 600) * 1000)), "glm"))
+                " updated_at text, model text, deleted integer, meta_json text)")
+    meta = '{"status":"%s"}' % meta_status
+    con.execute("insert into tasks values (?, ?, ?, ?, ?, 0, ?)",
+                ("<HOME>/alice/Projects/demo", "跑测试", task_status,
+                 str(int((time.time() - 600) * 1000)), "glm", meta))
     con.commit()
     con.close()
+    return db
+
+
+def test_zcode_maps_task_status(tmp_path, monkeypatch):
+    db = _zcode_db(tmp_path, "completed", "completed")
 
     from kindle_mcp_dashboard.plugins import zcode
     monkeypatch.setattr(zcode, "ZCODE_DB", db)
@@ -162,3 +169,15 @@ def test_zcode_maps_task_status(tmp_path, monkeypatch):
     assert state.status == "idle"
     assert state.project == "demo"
     assert state.task == "跑测试"
+
+
+def test_zcode_prefers_meta_status(tmp_path, monkeypatch):
+    """task_status 常常滞后：任务还在跑时它可能已是 completed，
+    但 meta_json 里的 status 是 active。以 meta 为准。"""
+    db = _zcode_db(tmp_path, "completed", "active")
+
+    from kindle_mcp_dashboard.plugins import zcode
+    monkeypatch.setattr(zcode, "ZCODE_DB", db)
+    state = zcode.state()
+    assert state.status == "running"
+    assert "task_meta" in state.basis

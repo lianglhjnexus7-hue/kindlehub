@@ -292,6 +292,10 @@ def models(settings: dict[str, Any], fetch: bool = True, force: bool = False,
             parts.append(f"¥{cost:.2f}")
         else:
             parts.append("费用未计价")
+        # 该模型消耗的积分（上游给的 credit 字段），0 也显示，保留两位小数
+        credit = window.get("credit")
+        if isinstance(credit, (int, float)):
+            parts.append(f"{credit:.2f} 积分")
 
         lines.append(name)
         lines.append(" · ".join(parts))

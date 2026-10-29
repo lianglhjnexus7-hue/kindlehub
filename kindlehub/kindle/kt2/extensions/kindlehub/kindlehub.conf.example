@@ -1,0 +1,17 @@
+# KindleHub 直写配置示例
+# 复制为 kindlehub.conf 后按实际情况修改（该文件不入库）
+
+# 当前网络（Mac 上跑 ipconfig getifaddr en0 获取）
+DASHBOARD_URL="http://192.168.1.100:8787/screen.png"
+
+# 候选列表（空格分隔）。常用地址都写进来，换网络时脚本会自动挑能用的。
+# 脚本解析到可用地址后会把 DASHBOARD_URL 写回本文件。
+DASHBOARD_URLS="http://192.168.1.100:8787/screen.png"
+
+# 刷新间隔（秒）
+REFRESH_SECONDS=60
+
+# 屏幕参数（KT2 = 600x800）
+SCREEN_WIDTH=600
+SCREEN_HEIGHT=800
+TOP_INSET=40

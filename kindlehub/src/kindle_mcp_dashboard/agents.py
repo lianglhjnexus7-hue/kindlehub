@@ -191,13 +191,10 @@ def format_rows(rows: list[dict[str, Any]], hide_unknown: bool = False,
         state_cn = STATUS_CN.get(row["status"], row["status"])
         mark = STATUS_MARK.get(row["status"], "?")
         project = row.get("project")
-        task = row.get("task")
-        if project and "、" in str(project):
-            project = str(project).split("、")[0]
         lines.append(f"{mark} {row['agent']} · {state_cn}")
-        detail = [x for x in (project, task) if x]
-        if detail:
-            lines.append("   " + " · ".join(detail))
+        # 只显示项目，不显示任务标题——标题太长，且经常换行
+        if project:
+            lines.append("   " + str(project))
 
     for row in idle_rows[:max_idle]:
         state_cn = STATUS_CN.get(row["status"], row["status"])

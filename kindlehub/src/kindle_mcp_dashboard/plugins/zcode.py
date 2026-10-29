@@ -8,6 +8,7 @@ searchable_text（含对话正文）一律不读。
 """
 from __future__ import annotations
 
+import json
 import sqlite3
 import time
 from pathlib import Path
@@ -19,8 +20,11 @@ ZCODE_DB = Path.home() / ".zcode" / "v2" / "tasks-index.sqlite"
 
 STATUS_MAP = {
     "running": "running", "in_progress": "running", "streaming": "running",
+    # meta_json 用的是 active；task_status 字段常滞后，不能只看它
+    "active": "running", "executing": "running", "working": "running",
     "completed": "idle", "done": "idle", "idle": "idle",
     "error": "error", "failed": "error", "cancelled": "idle",
+    "paused": "idle", "waiting": "waiting", "pending": "waiting",
 }
 
 
@@ -33,7 +37,7 @@ def state() -> AgentState:
         con = sqlite3.connect(f"file:{ZCODE_DB}?mode=ro", uri=True, timeout=2.0)
         try:
             row = con.execute(
-                "select workspace_path, title, task_status, updated_at "
+                "select workspace_path, title, task_status, updated_at, meta_json "
                 "from tasks where deleted = 0 order by updated_at desc limit 1"
             ).fetchone()
         finally:
@@ -46,7 +50,7 @@ def state() -> AgentState:
         out.status = "unknown"
         return out
 
-    workspace, title, status_text, updated_ms = row
+    workspace, title, status_text, updated_ms, meta_json = row
     try:
         stamp = float(updated_ms) / 1000.0
     except (TypeError, ValueError):
@@ -56,10 +60,26 @@ def state() -> AgentState:
     out.task = _short(title)
 
     lowered = str(status_text or "").lower()
-    out.status = STATUS_MAP.get(lowered, "unknown")
-    out.confidence = "high" if lowered in STATUS_MAP else "medium"
-    out.basis = (f"任务表状态为 {status_text}" if lowered in STATUS_MAP
-                 else f"未识别的状态值 {status_text}")
+
+    # meta_json 的 status 更新更及时；task_status 是索引字段，任务跑到一半时
+    # 可能还停在旧值（实测出现过 task_status=completed 但 meta.status=active）
+    meta_status = ""
+    try:
+        meta_status = str((json.loads(meta_json or "{}") or {}).get("status") or "").lower()
+    except Exception:
+        meta_status = ""
+
+    out.status = "unknown"
+    out.confidence = "medium"
+    for candidate, origin in ((meta_status, "task_meta"), (lowered, "task_status")):
+        if candidate and candidate in STATUS_MAP:
+            out.status = STATUS_MAP[candidate]
+            out.confidence = "high"
+            out.basis = f"{origin} 状态为 {candidate}"
+            break
+    else:
+        out.basis = f"未识别的状态值 task_status={status_text} meta={meta_status or '空'}"
+
     if out.status == "idle" and time.time() - stamp < RUNNING_WINDOW:
         out.basis += "（刚有更新，可能正在收尾）"
     return out

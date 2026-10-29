@@ -41,3 +41,6 @@ internal/
 # Kindle 挂载点残留
 .Trashes/
 ._*
+
+# Kindle 端本地配置（含实际网络地址，不入库）
+kindlehub/kindle/kt2/extensions/kindlehub/kindlehub.conf
