@@ -259,6 +259,28 @@ def test_preview_rejects_unhashable_source(server):
         assert "source" in json.loads(body)["error"]
 
 
+def test_preview_rejects_non_object_settings(server):
+    """weather/workbuddy 子配置非对象时消费端 .get 抛 AttributeError，
+    render_png 无兜底会丢连接；现在必须在边界返回 400。"""
+    for key in ("weather", "workbuddy"):
+        draft = json.loads(json.dumps(DEFAULT_DASHBOARD))
+        draft.setdefault("settings", {})[key] = "x"
+        status, body = send(server, "/api/preview", "POST", draft)
+        assert status == 400, f"settings.{key}='x' 导致 {status}"
+        assert key in json.loads(body)["error"]
+
+
+def test_put_rejects_non_object_relay_keeps_meta_healthy(server):
+    """settings.relay 非对象曾让 GET /api/meta 的 relay_cfg.get 抛 AttributeError
+    丢连接；现在 PUT 必须在边界拒绝，meta 保持可用。"""
+    bad = json.loads(json.dumps(DEFAULT_DASHBOARD))
+    bad.setdefault("settings", {})["relay"] = "x"
+    status, body = send(server, "/api/state", "PUT", bad)
+    assert status == 400
+    assert "relay" in json.loads(body)["error"]
+    assert get(server, "/api/meta")[0] == 200
+
+
 def test_screen_png_survives_hostile_battery_param(server):
     """batt=²（isdigit 放行但 int 拒收）与超长数字串都不能把渲染打崩。"""
     import urllib.parse

@@ -416,6 +416,27 @@ def test_schema_accepts_string_empty_and_absent_source():
         assert render_png(checked, fetch=False).startswith(b"\x89PNG")
 
 
+@pytest.mark.parametrize("key", ["weather", "workbuddy", "relay"])
+@pytest.mark.parametrize("value", ["x", [1], 5, True])
+def test_schema_rejects_non_object_settings_subconfig(key, value):
+    """weather/workbuddy/relay 子配置被消费端当对象 .get；非 dict 真值会抛
+    AttributeError，render_png 与 /api/meta 无兜底会丢连接。必须在边界拒绝。"""
+    data = deepcopy(DEFAULT_DASHBOARD)
+    data.setdefault("settings", {})[key] = value
+    with pytest.raises(DashboardError):
+        validate_dashboard(data)
+
+
+@pytest.mark.parametrize("key", ["weather", "workbuddy", "relay"])
+def test_schema_accepts_object_and_null_settings_subconfig(key):
+    """正常对象与 null（消费端 `or {}` 安全归空）都必须放行，且能正常渲染。"""
+    for value in ({"enabled": True}, None):
+        data = deepcopy(DEFAULT_DASHBOARD)
+        data.setdefault("settings", {})[key] = value
+        checked = validate_dashboard(data)
+        assert render_png(checked, fetch=False).startswith(b"\x89PNG")
+
+
 def test_image_decompression_bomb_is_skipped(monkeypatch):
     """超大图片触发 DecompressionBombError 时只跳过该图，不拖垮整帧。"""
     from PIL import Image

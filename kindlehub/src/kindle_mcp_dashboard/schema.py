@@ -49,6 +49,14 @@ def validate_dashboard(value: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(settings, dict):
         raise DashboardError("settings must be an object")
     data["settings"] = settings
+    # weather/workbuddy/relay 子配置被消费端当对象 .get（weather.current、
+    # workbuddy.current、health_summary、/api/meta 的 relay_cfg）；非 dict 真值会抛
+    # AttributeError，而 render_png 与 /api/meta 都没有兜底，会直接丢连接。
+    # None 由消费端的 `or {}` 安全归空，放行。
+    for key in ("weather", "workbuddy", "relay"):
+        sub = settings.get(key)
+        if sub is not None and not isinstance(sub, dict):
+            raise DashboardError(f"settings.{key} must be an object")
     refresh = data.get("refresh_seconds", 60)
     if not isinstance(refresh, int) or not 10 <= refresh <= 3600:
         raise DashboardError("refresh_seconds must be an integer between 10 and 3600")
