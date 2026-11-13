@@ -7,7 +7,7 @@
 #
 # 依赖：越狱 + KUAL（本目录即 KUAL 扩展），不需要改固件
 
-VERSION="1.13.0"
+VERSION="1.13.1"
 FAIL_COUNT=0
 CONF="/mnt/us/extensions/kindlehub/kindlehub.conf"
 IMAGE="/mnt/us/extensions/kindlehub/dashboard.png"
@@ -120,6 +120,14 @@ save_url() {
 # 固定名会互相覆盖造成误判。
 probe_url() {
     _url="$1"
+    # HTTPS（中继 raw）必须用 curl：busybox wget 不支持 SSL。否则中继地址
+    # 的「上次成功」快路径每轮都探测失败，白白退化到全量兜底（多耗 3 秒+候选探测）。
+    case "$_url" in
+        https://*)
+            curl -sSL --max-time 3 -o /dev/null "$_url" 2>/dev/null
+            return
+            ;;
+    esac
     _flag=$(mktemp /tmp/kh-probe.XXXXXXXX 2>/dev/null) || _flag="/tmp/kh-probe-$$"
     rm -f "$_flag"
     ( wget -q -O /dev/null "$_url" 2>/dev/null && : > "$_flag" ) &
