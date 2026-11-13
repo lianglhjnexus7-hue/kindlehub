@@ -1,0 +1,56 @@
+# 虚拟环境
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# 上游克隆（可重新获取，不入库；commit 记录见 NOTICE）
+vendor/
+
+# 运行时状态（含 secrets.json，切勿入库）
+.state/
+*.log
+
+# 渲染产物与截图（可重新生成）
+artifacts/
+
+# 由模板生成本机实例，含绝对路径
+deploy/*.plist
+
+# 内部笔记（含本机环境细节与上游代码行号分析，不对外）
+internal/
+
+# 环境变量
+.env
+
+# 编辑器与系统杂项
+.DS_Store
+.idea/
+.vscode/
+# Kindle 备份（含用户的电子书，体积大且私密，绝不入库）
+kindlehub/.backup/
+*.backup/
+
+# 发布仓库是独立 git 仓库，不并入主仓库
+.release/
+
+# 内部运维文档（含绝对路径与个人流程）
+internal/
+
+# Kindle 挂载点残留
+.Trashes/
+._*
+
+# Kindle 端本地配置（含实际网络地址，不入库）
+kindlehub/kindle/kt2/extensions/kindlehub/kindlehub.conf
+
+# 本机中继开关（含真实仓库 URL，不入库）
+kindlehub-dist/relay.conf
+
+# 本机调研产物与工具状态（不发布）
+research/
+.local/
+RESEARCH_reverse_channels.md
+gh_research_full.json
+gh_research_summary.txt

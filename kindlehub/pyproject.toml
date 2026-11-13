@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "kindlehub"
+version = "0.2.0"
+description = "KindleHub — 面向 Kindle 第 7 代（KT2）的局域网只读电子墨水仪表盘"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.11"
+dependencies = [
+  "mcp>=1.12,<2",
+  "Pillow>=11,<13",
+  "psutil>=7,<8",
+]
+
+[project.scripts]
+kindlehub = "kindle_mcp_dashboard.cli:main"
+kindlehub-mcp = "kindle_mcp_dashboard.mcp_server:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+kindle_mcp_dashboard = ["static/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

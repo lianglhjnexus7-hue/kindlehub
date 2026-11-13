@@ -1,0 +1,28 @@
+# KindleHub 直写配置示例
+# 复制为 kindlehub.conf 后按实际情况修改（该文件不入库）
+
+# 当前网络（Mac 上跑 ipconfig getifaddr en0 获取）
+DASHBOARD_URL="http://192.168.1.100:8787/screen.png"
+
+# 候选列表（空格分隔）。常用地址都写进来，换网络时脚本会自动挑能用的。
+# 脚本解析到可用地址后会把 DASHBOARD_URL 写回本文件。
+#
+# 第一项 192.168.15.201 是 **USB 网络（usbnet）** 的固定地址：
+# 装好 NiLuJe USBNetwork 后，USB 线就是一块网卡，Mac 固定 .201、
+# Kindle 固定 .244，与任何 Wi-Fi 都无关。家用/公司/热点来回切也不用改配置。
+# 详见 docs/usb-network.md
+DASHBOARD_URLS="http://192.168.15.201:8787/screen.png http://192.168.1.100:8787/screen.png"
+
+# 跨网络兜底：Mac 把每一帧推到一个永不变化的公开 URL，
+# LAN 找不到时 Kindle 自动改去那里拿图（用 curl 走 HTTPS）。
+# 留空则完全不启用，行为与旧版一致。
+# 服务端需同时在 settings.relay 里设 enabled=true。
+RELAY_URL=""
+
+# 刷新间隔（秒）
+REFRESH_SECONDS=60
+
+# 屏幕参数（KT2 = 600x800）
+SCREEN_WIDTH=600
+SCREEN_HEIGHT=800
+TOP_INSET=40

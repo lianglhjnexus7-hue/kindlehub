@@ -1,0 +1,91 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e kindlehub
+          pip install pytest
+      - name: Test
+        run: pytest kindlehub -q
+
+  device-consistency:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: dist 与源码脚本一致，版本号同步
+        run: |
+          # 两份脚本必须逐字节一致，否则发布会把旧脚本推给设备（曾降级过）
+          diff kindlehub-dist/kindlehub.sh \
+               kindlehub/kindle/kt2/extensions/kindlehub/bin/kindlehub.sh
+          v=$(sed -n 's/^VERSION="\(.*\)"/\1/p' kindlehub-dist/kindlehub.sh)
+          t=$(cat kindlehub-dist/version.txt)
+          if [ -z "$v" ] || [ "$v" != "$t" ]; then
+            echo "::error::VERSION($v) 与 version.txt($t) 不一致"
+            exit 1
+          fi
+          echo "设备脚本一致，版本 $v"
+
+  secrets-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Scan for accidental secrets and personal data
+        run: |
+          # kindlehub/kindle/ 是上游保留的参考脚本，含文档用占位 IP，排除在外
+          fail=0
+
+          echo "== 运行时状态不应被跟踪 =="
+          if git ls-files | grep -E "^\.state/|secrets\.json$"; then
+            echo "::error::.state/ 或 secrets.json 被跟踪了"; fail=1
+          fi
+
+          # -z/-0：文件名含空格（如 "KindleHub 停止.sh"）也不能漏扫
+          scan_all() {
+            git ls-files -z | grep -zv "^kindlehub/kindle/" \
+              | xargs -0 grep -lE "$1" /dev/null 2>/dev/null || true
+          }
+
+          echo "== 个人绝对路径 =="
+          hits=$(scan_all "/Users/[a-z]|/home/[a-z]")
+          if [ -n "$hits" ]; then
+            echo "$hits"; echo "::error::发现个人绝对路径"; fail=1
+          fi
+
+          echo "== 局域网 IP =="
+          # 文档安全值先抹掉再匹配：Kindle USB 默认网段 192.168.15.x、
+          # 备选 192.168.244.x、项目官方示例 192.168.1.100（见 CONTRIBUTING-AGENTS.md）
+          IP_PAT='\b(10\.[0-9]+\.[0-9]+\.[0-9]+|192\.168\.[0-9]+\.[0-9]+|172\.(1[6-9]|2[0-9]|3[01])\.[0-9]+\.[0-9]+)\b'
+          while IFS= read -r -d '' f; do
+            if sed -E 's/192\.168\.(15|244)\.[0-9]+//g; s/192\.168\.1\.100//g' "$f" \
+               | grep -qE "$IP_PAT"; then
+              echo "$f"; echo "::error::发现局域网 IP"; fail=1
+            fi
+          done < <(git ls-files -z | grep -zv "^kindlehub/kindle/")
+
+          echo "== 个人邮箱 =="
+          hits=$(scan_all "[A-Za-z0-9._%+-]+@(gmail|qq|163|outlook|hotmail|foxmail)\.")
+          if [ -n "$hits" ]; then
+            echo "$hits"; echo "::error::发现个人邮箱"; fail=1
+          fi
+
+          echo "== 密钥字面量 =="
+          hits=$(scan_all "(password|secret|api[_-]?key)[\"']?[[:space:]]*[:=][[:space:]]*[\"'][^\"']{12,}")
+          if [ -n "$hits" ]; then
+            echo "$hits"; echo "::error::发现疑似密钥"; fail=1
+          fi
+
+          if [ "$fail" = "1" ]; then exit 1; fi
+          echo "全部通过"

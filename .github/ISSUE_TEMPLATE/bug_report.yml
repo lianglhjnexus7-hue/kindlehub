@@ -1,0 +1,31 @@
+name: Bug 报告
+description: 报告一个问题
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: 发生了什么
+      description: 简单描述问题现象
+    validations:
+      required: true
+  - type: input
+    id: device
+    attributes:
+      label: Kindle 型号与系统
+      description: 例如 Kindle 第 7 代 / 固件版本
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: 服务端系统
+      description: 例如 macOS 15 / Python 3.12
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: 相关日志
+      description: 请先去掉敏感信息（IP、路径、Token）
+      render: shell
