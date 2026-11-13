@@ -437,6 +437,30 @@ def test_schema_accepts_object_and_null_settings_subconfig(key):
         assert render_png(checked, fetch=False).startswith(b"\x89PNG")
 
 
+def _nested_dict(depth: int) -> dict:
+    obj: dict = {"leaf": 1}
+    for _ in range(depth):
+        obj = {"n": obj}
+    return obj
+
+
+def test_schema_rejects_deeply_nested_config():
+    """深层嵌套 json.loads 能解析，但 validate 的 deepcopy 抛 RecursionError；
+    调用方只捕获 DashboardError 会丢连接。必须转译成 DashboardError。"""
+    data = deepcopy(DEFAULT_DASHBOARD)
+    data["junk"] = _nested_dict(2000)
+    with pytest.raises(DashboardError):
+        validate_dashboard(data)
+
+
+def test_schema_accepts_moderately_nested_config():
+    """正常深度的嵌套不能误伤：deepcopy 过得去就放行并正常渲染。"""
+    data = deepcopy(DEFAULT_DASHBOARD)
+    data["junk"] = _nested_dict(20)
+    checked = validate_dashboard(data)
+    assert render_png(checked, fetch=False).startswith(b"\x89PNG")
+
+
 def test_image_decompression_bomb_is_skipped(monkeypatch):
     """超大图片触发 DecompressionBombError 时只跳过该图，不拖垮整帧。"""
     from PIL import Image

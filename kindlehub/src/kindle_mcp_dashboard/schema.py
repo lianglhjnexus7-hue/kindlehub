@@ -32,7 +32,13 @@ def canvas_height(device: dict[str, Any]) -> float:
 def validate_dashboard(value: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise DashboardError("dashboard must be an object")
-    data = deepcopy(value)
+    try:
+        data = deepcopy(value)
+    except RecursionError:
+        # 深层嵌套 json.loads 能解析，但 deepcopy 递归更浅会抛 RecursionError，
+        # 调用方只捕获 DashboardError，不转译就会丢连接。deepcopy 每层耗帧最多，
+        # 它过得去的配置后续 str()/json.dumps/渲染都不会再触顶。
+        raise DashboardError("dashboard is nested too deeply") from None
     device = data.get("device", {})
     if not isinstance(device, dict):
         raise DashboardError("device must be an object")
