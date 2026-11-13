@@ -264,3 +264,35 @@ def test_gist_relay_refuses_guessable_path(monkeypatch):
     assert gist_relay.raw_url({"repo": "owner/repo"}) == ""
     msg = gist_relay.publish(b"png", {"enabled": True, "repo": "owner/repo"})
     assert "path" in msg
+
+
+def test_is_guessable_path():
+    """常见可猜名字判为不安全；随机 capability 路径与空路径不误判。"""
+    from kindle_mcp_dashboard import gist_relay
+    for bad in ("screen.png", "relay/screen.png", "Dashboard.PNG", "frame.png"):
+        assert gist_relay.is_guessable_path(bad), bad
+    for ok in ("relay/0123456789abcdef.png", "", "relay/custom-name.png"):
+        assert not gist_relay.is_guessable_path(ok), ok
+
+
+def test_relay_migrates_legacy_guessable_path(tmp_path, monkeypatch):
+    """遗留的可猜路径（screen.png）必须被迁移成随机 capability 路径并持久化。"""
+    from kindle_mcp_dashboard import gist_relay, web
+    from kindle_mcp_dashboard.store import DashboardStore
+    store = DashboardStore(tmp_path / "state.json")
+    data = store.read()
+    data["settings"]["relay"] = {"enabled": True, "repo": "owner/repo", "path": "screen.png"}
+    store.write(data)
+    monkeypatch.setattr(gist_relay, "publish", lambda png, cfg: "ok " + cfg["path"])
+    monkeypatch.setattr(gist_relay, "last_publish_time", lambda cfg: None)
+    monkeypatch.setattr(web, "render_png", lambda data, fetch=False: b"\x89PNG fake")
+    web._relay_state.update({"at": 0.0, "last": ""})
+    web._publish_relay(store)
+    saved = store.read()["settings"]["relay"]
+    assert saved["path"].startswith("relay/") and saved["path"].endswith(".png")
+    assert not gist_relay.is_guessable_path(saved["path"])
+    assert len(saved["path"]) >= len("relay/") + 16 + len(".png")
+    # 迁移后 URL 必须稳定，不能每次刷新都换（Kindle 侧要能持续拉到）
+    web._relay_state.update({"at": 0.0, "last": ""})
+    web._publish_relay(store)
+    assert store.read()["settings"]["relay"]["path"] == saved["path"]

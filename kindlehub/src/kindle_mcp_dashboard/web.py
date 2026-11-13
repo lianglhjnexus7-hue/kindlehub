@@ -122,8 +122,8 @@ def _publish_relay(store: DashboardStore) -> None:
         cfg = dict(data.get("settings", {}).get("relay") or {})
         if not cfg.get("enabled"):
             return
-        if not cfg.get("path"):
-            # 首次启用：生成不可猜测的 capability 路径并持久化。
+        if not cfg.get("path") or gist_relay.is_guessable_path(cfg["path"]):
+            # 首次启用或迁移遗留可猜路径：生成不可猜测的 capability 路径并持久化。
             # 固定 screen.png 等于把画面公开给任何知道仓库名的人。
             from secrets import token_hex
             cfg["path"] = f"relay/{token_hex(8)}.png"

@@ -31,5 +31,29 @@ if command -v sha256sum >/dev/null 2>&1; then
 else
     (cd "$DIST" && shasum -a 256 kindlehub.sh > kindlehub.sh.sha256)
 fi
+
+# relay.conf 由 settings.relay 推导，避免与真实路径漂移（改路径后 Kindle 局域网自动跟上）。
+# 启用且路径不可猜测时写 RELAY_URL；否则删除 relay.conf（停用跨网兜底）。
+PY="$ROOT/.venv/bin/python"; [ -x "$PY" ] || PY=python3
+STATE="${KINDLE_DASHBOARD_STATE:-$ROOT/.state/kt2.json}"
+RELAY_URL="$("$PY" - "$ROOT" "$STATE" <<'PYEOF'
+import json, sys
+root, state = sys.argv[1], sys.argv[2]
+sys.path.insert(0, root + "/kindlehub/src")
+try:
+    from kindle_mcp_dashboard import gist_relay
+    cfg = json.load(open(state)).get("settings", {}).get("relay", {})
+    if cfg.get("enabled") and cfg.get("path") and not gist_relay.is_guessable_path(cfg["path"]):
+        print(gist_relay.raw_url(cfg))
+except Exception:
+    pass
+PYEOF
+)"
+if [ -n "$RELAY_URL" ]; then
+    printf '# KindleHub 跨网络中继配置\n# 有这个文件就启用固定 URL 兜底；删除即停用（不用插 USB）\nRELAY_URL="%s"\n' "$RELAY_URL" > "$DIST/relay.conf"
+    chmod 600 "$DIST/relay.conf"
+else
+    rm -f "$DIST/relay.conf"
+fi
 echo "已发布 ${version}："
 ls -l "$DIST"

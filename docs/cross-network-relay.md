@@ -43,6 +43,8 @@ capability 路径（形如 `relay/3f9a…16位十六进制….png`）并写回�
 固定可猜的路径（如 `relay/screen.png`）等于把画面公开给任何知道仓库名的人，
 所以代码里没有默认路径，缺路径时直接拒绝发布。
 生成后的路径可以在后台 `/api/meta` 的 `relay.path` 里查到。
+旧配置里若残留可猜路径（如 `screen.png`），服务端会在下次发布时自动迁移成
+随机路径并写回配置，无需手工改。
 
 `branch` 建议用专用的 `relay` 分支（默认值）：每 5 分钟一帧会淹没
 main 的发布历史。服务端每 300 秒（对齐 GitHub raw 的 `max-age=300`）
@@ -50,7 +52,13 @@ main 的发布历史。服务端每 300 秒（对齐 GitHub raw 的 `max-age=300
 
 ### 2. Kindle 端
 
-把上一步生成的随机路径填进 `/mnt/us/extensions/kindlehub/kindlehub.conf`：
+`deploy/publish-kindle.sh` 会按 `settings.relay` 自动生成 `kindlehub-dist/relay.conf`
+（含当前随机路径的 RELAY_URL）；路径迁移后它随之更新，不会与真实路径漂移。
+
+- **局域网**：Kindle 本地 conf 的 `RELAY_URL` 留空即可，脚本自动从分发服务
+  （8792 端口）拉 `relay.conf` 拿最新 URL，改路径不用插 USB。
+- **跨网络**：Kindle 够不到分发服务，需把随机路径写死进
+  `/mnt/us/extensions/kindlehub/kindlehub.conf`（USB 挂载改一次）：
 
 ```sh
 RELAY_URL="https://raw.githubusercontent.com/<owner>/<repo>/relay/relay/<随机串>.png"
@@ -75,7 +83,8 @@ RELAY_URL="https://raw.githubusercontent.com/<owner>/<repo>/relay/relay/<随机�
 
 ## 实现位置
 
-- `kindlehub/src/kindle_mcp_dashboard/gist_relay.py`：发布 / 取回
+- `kindlehub/src/kindle_mcp_dashboard/gist_relay.py`：发布 / 取回 / 可猜路径识别
+- `deploy/publish-kindle.sh`：按 settings.relay 推导 kindlehub-dist/relay.conf
 - `web.py` 的 `_publish_relay()`：接入 60 秒预热循环，带 300 秒节流
 - `kindlehub/kindle/kt2/extensions/kindlehub/bin/kindlehub.sh`：
   `resolve_url()` 第 3 级兜底 + `curl` 拉取分支

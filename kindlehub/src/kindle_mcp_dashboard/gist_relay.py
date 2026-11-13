@@ -44,6 +44,16 @@ DEFAULT_BRANCH = "relay"
 DEFAULT_PATH = ""
 RAW_TMPL = "https://raw.githubusercontent.com/{repo}/{branch}/{path}"
 
+# 可猜测的遗留路径：仓库名公开时，这些常见名字等于把画面公开。
+# 首次启用或迁移时一律换成 relay/<随机hex>.png（capability URL）。
+_GUESSABLE_NAMES = {"screen.png", "dashboard.png", "frame.png", "relay.png"}
+
+
+def is_guessable_path(path: str) -> bool:
+    """basename 是常见可猜名字即视为不安全；空路径由调用方单独处理。"""
+    name = str(path or "").rsplit("/", 1)[-1].lower()
+    return name in _GUESSABLE_NAMES
+
 
 def gh_token() -> str:
     """从 gh 的 keyring 取 token，绝不写进配置或仓库。"""
