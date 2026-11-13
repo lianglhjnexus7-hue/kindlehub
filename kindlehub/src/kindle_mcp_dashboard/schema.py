@@ -84,6 +84,14 @@ def validate_dashboard(value: dict[str, Any]) -> dict[str, Any]:
                 raise DashboardError(
                     f"region {rid} must fit inside the normalized "
                     f"{CANVAS_WIDTH}x{limit_h:.0f} canvas")
+            # size/head_size 可选，但一旦给出必须是有限数值：渲染端 int() 先于
+            # 字号夹取执行，字符串/null/容器会抛 ValueError/TypeError 崩帧，
+            # 而 /api/preview 的 render_png 没有兜底，会直接丢掉连接。
+            for key in ("size", "head_size"):
+                if key in region:
+                    number = region[key]
+                    if not isinstance(number, (int, float)) or not math.isfinite(number):
+                        raise DashboardError(f"region {rid}.{key} must be a finite number")
     if data.get("active_screen") not in screen_ids:
         raise DashboardError("active_screen must name an existing screen")
     return data

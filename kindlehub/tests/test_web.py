@@ -206,6 +206,17 @@ def test_preview_returns_png_for_draft(server):
     assert body.startswith(b"\x89PNG")
 
 
+def test_preview_rejects_non_numeric_size(server):
+    """非数值 size 必须返回 400，而不是让 render_png 抛异常丢掉连接。
+    admin.js 输入非数字 → NaN → JSON null，正是这条崩溃路径。"""
+    for bad_size in ("abc", None, [1]):
+        draft = json.loads(json.dumps(DEFAULT_DASHBOARD))
+        draft["screens"][0]["regions"][0]["size"] = bad_size
+        status, body = send(server, "/api/preview", "POST", draft)
+        assert status == 400, f"size={bad_size!r} 导致 {status}"
+        assert "size" in json.loads(body)["error"]
+
+
 def test_screen_png_survives_hostile_battery_param(server):
     """batt=²（isdigit 放行但 int 拒收）与超长数字串都不能把渲染打崩。"""
     import urllib.parse

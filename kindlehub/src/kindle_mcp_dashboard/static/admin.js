@@ -274,7 +274,10 @@ function renderProps() {
   }
 
   body.appendChild(field('字号 size（像素）', textInput(r.size, (v) => {
-    if (v === '') delete r.size; else r.size = Number(v);
+    // 非数字输入 Number(v) 得 NaN，JSON.stringify 会落成 null，
+    // 后端 int(null) 崩帧。与空串一样删掉键，让渲染端用该 kind 的默认字号。
+    const n = Number(v);
+    if (v === '' || Number.isNaN(n)) delete r.size; else r.size = n;
     refreshPreview();
   }, 'number')));
 

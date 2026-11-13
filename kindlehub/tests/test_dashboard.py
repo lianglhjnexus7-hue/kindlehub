@@ -337,6 +337,32 @@ def test_font_size_out_of_range_does_not_crash_or_hang():
         assert render_png(data, fetch=False).startswith(b"\x89PNG")
 
 
+@pytest.mark.parametrize("key,value", [
+    ("size", "abc"), ("size", None), ("size", [1]), ("size", {"a": 1}),
+    ("size", float("nan")), ("size", float("inf")),
+    ("head_size", "abc"), ("head_size", None), ("head_size", [1]), ("head_size", {"a": 1}),
+])
+def test_schema_rejects_non_numeric_font_size(key, value):
+    """size/head_size 非数值必须在边界被拒：渲染端 int() 先于字号夹取执行，
+    字符串/null/容器会崩帧，而 /api/preview 的 render_png 无兜底会丢连接。
+    admin.js 输入非数字曾产出 NaN→JSON null，正是这条路径。"""
+    data = deepcopy(DEFAULT_DASHBOARD)
+    data["screens"][0]["regions"] = [
+        {"id": "t", "kind": "text", "x": 0, "y": 0, "w": 1000, "h": 600,
+         "value": "hello", key: value}]
+    with pytest.raises(DashboardError):
+        validate_dashboard(data)
+
+
+def test_schema_accepts_numeric_font_size():
+    """正常整数/浮点字号必须放行，不能被类型校验误伤。"""
+    data = deepcopy(DEFAULT_DASHBOARD)
+    data["screens"][0]["regions"] = [
+        {"id": "t", "kind": "text", "x": 0, "y": 0, "w": 1000, "h": 600,
+         "value": "hello", "size": 26, "head_size": 40.0}]
+    validate_dashboard(data)
+
+
 def test_image_decompression_bomb_is_skipped(monkeypatch):
     """超大图片触发 DecompressionBombError 时只跳过该图，不拖垮整帧。"""
     from PIL import Image
