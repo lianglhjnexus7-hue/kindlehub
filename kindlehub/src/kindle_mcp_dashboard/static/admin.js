@@ -621,7 +621,12 @@ async function boot() {
     meta = m;
     state = s;
   } catch (e) {
-    document.body.innerHTML = '<p style="padding:20px">无法连接后端：' + e.message + '</p>';
+    // e.message 可能含响应体片段（如局域网门户返回的 HTML），用 textContent 杜绝 XSS
+    const p = document.createElement('p');
+    p.style.padding = '20px';
+    p.textContent = '无法连接后端：' + e.message;
+    document.body.innerHTML = '';
+    document.body.appendChild(p);
     return;
   }
 
