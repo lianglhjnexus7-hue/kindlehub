@@ -296,3 +296,44 @@ def test_relay_migrates_legacy_guessable_path(tmp_path, monkeypatch):
     web._relay_state.update({"at": 0.0, "last": ""})
     web._publish_relay(store)
     assert store.read()["settings"]["relay"]["path"] == saved["path"]
+
+
+def test_relay_publish_uses_project_identity(monkeypatch):
+    """推帧提交必须显式用项目身份，绝不带 gh 账号个人邮箱。"""
+    from kindle_mcp_dashboard import gist_relay
+    monkeypatch.setattr(gist_relay, "gh_token", lambda: "token")
+    calls = []
+
+    def fake_api(method, url, token, body=None):
+        calls.append((method, url, body))
+        if url.endswith("/git/blobs"):
+            return 201, {"sha": "blobsha"}
+        if url.endswith("/git/trees"):
+            return 201, {"sha": "treesha"}
+        if url.endswith("/git/commits"):
+            return 201, {"sha": "commitsha"}
+        if method == "GET" and "/git/ref/heads/" in url:
+            return 200, {"object": {"sha": "parentsha"}}
+        return 200, {}
+
+    monkeypatch.setattr(gist_relay, "_api", fake_api)
+    cfg = {"enabled": True, "repo": "owner/repo",
+           "path": "relay/0123456789abcdef.png", "branch": "relay"}
+    msg = gist_relay.publish(b"\x89PNG fake", cfg)
+    assert "已发布" in msg
+    commits = [b for (m, u, b) in calls if u.endswith("/git/commits")]
+    assert commits, "必须创建 commit"
+    assert commits[0]["author"]["email"] == "kindlehub@localhost"
+    assert commits[0]["committer"]["email"] == "kindlehub@localhost"
+    assert "gmail" not in json.dumps(commits[0]).lower()
+    trees = [b for (m, u, b) in calls if u.endswith("/git/trees")]
+    assert trees[0]["tree"] == [
+        {"path": cfg["path"], "mode": "100644", "type": "blob", "sha": "blobsha"}]
+
+
+def test_relay_publish_refuses_guessable_path(monkeypatch):
+    """即便直接调用 publish，可猜路径也必须被拒绝（fail-closed）。"""
+    from kindle_mcp_dashboard import gist_relay
+    monkeypatch.setattr(gist_relay, "gh_token", lambda: "token")
+    msg = gist_relay.publish(b"png", {"enabled": True, "repo": "owner/repo", "path": "screen.png"})
+    assert "可猜" in msg

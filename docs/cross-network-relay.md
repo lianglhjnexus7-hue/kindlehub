@@ -20,6 +20,8 @@ Kindle 在 LAN 找不到时自动改去那里拿图。
   现有 `eips` 直写链路一行不用改。
 - 隐私靠随机长路径 + 只放渲染后的图片：画面不含会话正文、
   原始日志、主机名或凭据（服务端已有会话标题过滤）。
+- 推帧用 Git Data API 显式指定项目身份提交，不泄漏 gh 账号的个人邮箱
+  （无需依赖账号的「邮箱隐私」设置）。
 
 ## 开启步骤
 
@@ -83,7 +85,7 @@ RELAY_URL="https://raw.githubusercontent.com/<owner>/<repo>/relay/relay/<随机�
 
 ## 实现位置
 
-- `kindlehub/src/kindle_mcp_dashboard/gist_relay.py`：发布 / 取回 / 可猜路径识别
+- `kindlehub/src/kindle_mcp_dashboard/gist_relay.py`：Git Data API 发布（项目身份）/ 取回 / 可猜路径识别
 - `deploy/publish-kindle.sh`：按 settings.relay 推导 kindlehub-dist/relay.conf
 - `web.py` 的 `_publish_relay()`：接入 60 秒预热循环，带 300 秒节流
 - `kindlehub/kindle/kt2/extensions/kindlehub/bin/kindlehub.sh`：

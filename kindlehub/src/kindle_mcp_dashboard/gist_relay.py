@@ -24,7 +24,8 @@ URL 取。Mac 换家里/公司/手机热点都没有影响，Kindle 也不需要
 
 ## 访问
 
-上传用 GitHub Contents API + gh 的 token（从 keyring 取，不落盘）；
+上传用 GitHub Git Data API + gh 的 token（从 keyring 取，不落盘），
+提交身份显式固定为项目身份，不泄漏 gh 账号的个人邮箱；
 读取完全公开、无需认证，所以 Kindle 侧只需要 wget。
 """
 from __future__ import annotations
@@ -91,8 +92,19 @@ def raw_url(cfg: dict[str, Any]) -> str:
     )
 
 
+# 中继提交固定用项目身份：Contents API 会强制套用 gh 账号的个人邮箱，
+# Git Data API 允许显式指定 author/committer，隐私保证内建于代码，
+# 不依赖账号是否开启「邮箱隐私」。与发布脚本的项目身份保持一致。
+PROJECT_IDENTITY = {"name": "KindleHub Dev", "email": "kindlehub@localhost"}
+
+
 def publish(png: bytes, cfg: dict[str, Any]) -> str:
-    """发布一帧，返回状态文案。默认关闭，不开就完全不影响现有链路。"""
+    """发布一帧，返回状态文案。默认关闭，不开就完全不影响现有链路。
+
+    用 Git Data API（blob→tree→commit→ref）而非 Contents API：
+    提交身份显式固定为项目身份，绝不泄漏 gh 账号的个人邮箱；
+    每帧的 tree 只含 capability 路径文件，自动丢弃可猜的遗留文件。
+    """
     if not cfg.get("enabled"):
         return "relay: 未启用"
     token = gh_token()
@@ -104,24 +116,37 @@ def publish(png: bytes, cfg: dict[str, Any]) -> str:
     path = str(cfg.get("path") or DEFAULT_PATH)
     if not path:
         return "relay: 未配置 path（首次启用时自动生成随机路径）"
+    if is_guessable_path(path):
+        return "relay: 拒绝可猜路径（请用随机 capability 路径）"
     branch = str(cfg.get("branch") or DEFAULT_BRANCH)
-    api = "https://api.github.com/repos/" + repo + "/contents/" + path
+    base = "https://api.github.com/repos/" + repo
     try:
-        # 已存在要带 sha 才能更新
-        sha = None
+        _s, blob = _api("POST", base + "/git/blobs", token,
+                        {"content": base64.b64encode(png).decode(), "encoding": "base64"})
+        parent = None
         try:
-            _status, existing = _api("GET", api + "?ref=" + branch, token)
-            sha = existing.get("sha")
+            _s, ref = _api("GET", base + "/git/ref/heads/" + branch, token)
+            parent = ref["object"]["sha"]
         except Exception:
-            pass
-        body: dict[str, Any] = {
+            parent = None
+        # 只含当前帧的全新 tree：不带 base_tree，遗留文件（含可猜路径）一并清除
+        _s, tree = _api("POST", base + "/git/trees", token,
+                        {"tree": [{"path": path, "mode": "100644", "type": "blob", "sha": blob["sha"]}]})
+        commit_body: dict[str, Any] = {
             "message": "kindlehub relay frame",
-            "content": base64.b64encode(png).decode(),
-            "branch": branch,
+            "tree": tree["sha"],
+            "author": dict(PROJECT_IDENTITY),
+            "committer": dict(PROJECT_IDENTITY),
         }
-        if sha:
-            body["sha"] = sha
-        _api("PUT", api, token, body)
+        if parent:
+            commit_body["parents"] = [parent]
+        _s, commit = _api("POST", base + "/git/commits", token, commit_body)
+        if parent:
+            _api("PATCH", base + "/git/refs/heads/" + branch, token,
+                 {"sha": commit["sha"], "force": True})
+        else:
+            _api("POST", base + "/git/refs", token,
+                 {"ref": "refs/heads/" + branch, "sha": commit["sha"]})
         return f"relay: 已发布 {len(png)}B -> {raw_url(cfg)}"
     except Exception as exc:  # noqa: BLE001
         return f"relay: 失败 {type(exc).__name__}: {str(exc)[:80]}"
