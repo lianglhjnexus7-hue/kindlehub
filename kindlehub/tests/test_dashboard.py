@@ -321,6 +321,22 @@ def test_list_null_text_and_unhashable_status_render():
     assert render_png(data, fetch=False).startswith(b"\x89PNG")
 
 
+def test_font_size_out_of_range_does_not_crash_or_hang():
+    """size/head_size 为 0、负数或超大时只缩字，不崩帧也不空转。
+    旧实现 _font(0) 抛 ValueError、_font(100000) 抛 OSError；
+    且 _draw_wrapped 逐号递减会让超大 size 空转数十万次（挂死）。"""
+    for size, head in [(0, None), (-5, None), (100000, None),
+                       (26, -3), (26, 100000)]:
+        data = deepcopy(DEFAULT_DASHBOARD)
+        region = {"id": "t", "kind": "text", "x": 0, "y": 0, "w": 1000, "h": 600,
+                  "value": "hello 世界", "size": size}
+        if head is not None:
+            region["head_size"] = head
+        data["screens"][0]["regions"] = [region]
+        data = validate_dashboard(data)
+        assert render_png(data, fetch=False).startswith(b"\x89PNG")
+
+
 def test_image_decompression_bomb_is_skipped(monkeypatch):
     """超大图片触发 DecompressionBombError 时只跳过该图，不拖垮整帧。"""
     from PIL import Image

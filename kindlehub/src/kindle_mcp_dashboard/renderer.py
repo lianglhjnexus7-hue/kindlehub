@@ -21,6 +21,10 @@ from .sources import resolve, snapshot
 
 CANVAS_WIDTH = 1000
 
+# 字号安全上限：FreeType 对超大像素抛 OSError，且适配循环逐号递减，
+# 不夹住会让恶意/误配的超大 size 空转数十万次。512 远超任何正常排版需求。
+MAX_FONT_SIZE = 512
+
 # (路径, ttc face 索引)。Hiragino Sans GB.ttc: 0=W3 常规, 2=W6 粗体。
 REGULAR_FONTS: tuple[tuple[str, int], ...] = (
     ("/System/Library/Fonts/Hiragino Sans GB.ttc", 0),
@@ -283,6 +287,10 @@ def _draw_wrapped(draw: ImageDraw.ImageDraw, value: str, x: int, y: int, width: 
 
     用于"28℃ 晴 / 湿度 70% · 风 9km/h"这种一张卡里两级字号的信息。
     """
+    # 先夹住字号再进下面的逐号递减适配循环，否则超大 size 会空转数十万次
+    size = max(1, min(int(size), MAX_FONT_SIZE))
+    if head_size:
+        head_size = max(1, min(int(head_size), MAX_FONT_SIZE))
     paragraphs = str(value).split(chr(10))
     anchor = "ra" if align == "right" else "ma" if align == "center" else "la"
     draw_x = x + width if align == "right" else x + width // 2 if align == "center" else x
@@ -341,6 +349,8 @@ def _wrap(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.ImageFont, max_w
 
 @lru_cache(maxsize=64)
 def _font(size: int, bold: bool = False) -> ImageFont.ImageFont:
+    # 夹到安全区间：Pillow 对 <=0 抛 ValueError、超大像素抛 OSError，坏 size 只缩字不崩帧
+    size = max(1, min(int(size), MAX_FONT_SIZE))
     for path, index in (BOLD_FONTS if bold else REGULAR_FONTS):
         if not Path(path).exists():
             continue
