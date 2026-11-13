@@ -200,7 +200,9 @@ def make_server(host: str = "0.0.0.0", port: int = 8787, refresh: int = 60,
         # ---------- 只读显示（局域网） ----------
 
         def do_GET(self) -> None:  # noqa: N802
-            path = urlparse(self.path).path
+            path = self._route()
+            if path is None:
+                return
             if path in {"/", "/kindle"}:
                 if self.client_address[0] not in LOOPBACK:
                     _last_seen.update({"at": time.time(), "ip": self.client_address[0]})
@@ -338,7 +340,10 @@ def make_server(host: str = "0.0.0.0", port: int = 8787, refresh: int = 60,
         def do_PUT(self) -> None:  # noqa: N802
             if not self._local():
                 return
-            if urlparse(self.path).path != "/api/state":
+            path = self._route()
+            if path is None:
+                return
+            if path != "/api/state":
                 self._send(HTTPStatus.NOT_FOUND, "text/plain", b"Not found\n")
                 return
             payload = self._read_json()
@@ -355,7 +360,9 @@ def make_server(host: str = "0.0.0.0", port: int = 8787, refresh: int = 60,
         def do_POST(self) -> None:  # noqa: N802
             if not self._local():
                 return
-            route = urlparse(self.path).path
+            route = self._route()
+            if route is None:
+                return
             if route == "/api/secrets":
                 payload = self._read_json()
                 if payload is None:
@@ -419,11 +426,24 @@ def make_server(host: str = "0.0.0.0", port: int = 8787, refresh: int = 60,
             _last_png["data"] = png
             return png
 
+        def _route(self) -> str | None:
+            """安全解析请求目标的路径。畸形 absolute-form（如 http://[bad）会让
+            urlparse 抛 ValueError，不捕获就丢连接；失败时回 400 并返回 None。"""
+            try:
+                return urlparse(self.path).path
+            except ValueError:
+                self._send(HTTPStatus.BAD_REQUEST, "text/plain", b"Bad request target\n")
+                return None
+
         def _local(self) -> bool:
             if self.client_address[0] in LOOPBACK:
                 # 防 DNS rebinding：恶意页面把域名解析到 127.0.0.1 后，
                 # 请求同样来自回环；Host 不是本机名就一律拒绝
-                host = urlparse("//" + (self.headers.get("Host") or "")).hostname
+                try:
+                    host = urlparse("//" + (self.headers.get("Host") or "")).hostname
+                except ValueError:
+                    # 畸形 Host（如 [bad）让 urlparse 抛 ValueError；当作非法主机拒绝
+                    host = None
                 if host in {"localhost", "127.0.0.1", "::1"}:
                     return True
             self._send(HTTPStatus.FORBIDDEN, "text/plain; charset=utf-8",

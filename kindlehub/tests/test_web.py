@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import json
+import socket
 import threading
 import urllib.error
 import urllib.request
@@ -49,6 +50,15 @@ def send(port: int, path: str, method: str, payload) -> tuple[int, bytes]:
             return response.status, response.read()
     except urllib.error.HTTPError as exc:
         return exc.code, exc.read()
+
+
+def raw_status(port: int, request: bytes) -> bytes | None:
+    """发送原始请求字节，返回状态行；连接被丢弃（无响应）时返回 None。
+    urllib 无法构造畸形请求目标/Host，只能用裸 socket。"""
+    with socket.create_connection(("127.0.0.1", port), timeout=10) as sock:
+        sock.sendall(request)
+        data = sock.recv(4096)
+    return data.split(b"\r\n", 1)[0] if data else None
 
 
 def test_health(server):
@@ -323,6 +333,25 @@ def test_admin_rejects_foreign_host_header(server):
     except urllib.error.HTTPError as exc:
         status = exc.code
     assert status == 403
+
+
+@pytest.mark.parametrize("target", [b"http://[bad", b"http://[::1", b"http://]", b"http://["])
+def test_malformed_request_target_returns_400(server, target):
+    """畸形 absolute-form 目标让 do_GET 的 urlparse 抛 ValueError；
+    必须回 400 而非丢连接（裸 socket 构造，urllib 发不出这种目标）。"""
+    line = raw_status(server, b"GET " + target +
+                      b" HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+    assert line is not None, "连接被丢弃"
+    assert b"400" in line
+
+
+@pytest.mark.parametrize("host", [b"[bad", b"]", b"[", b"[::1"])
+def test_malformed_host_header_returns_403(server, host):
+    """畸形 Host 让 _local 的 urlparse 抛 ValueError；必须回 403 而非丢连接。"""
+    line = raw_status(server, b"GET /api/state HTTP/1.1\r\nHost: " + host +
+                      b"\r\nConnection: close\r\n\r\n")
+    assert line is not None, "连接被丢弃"
+    assert b"403" in line
 
 
 def test_write_rejects_form_content_type(server):
