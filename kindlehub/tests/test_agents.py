@@ -110,6 +110,31 @@ def test_codex_marks_idle_after_task_complete(tmp_path, monkeypatch):
     assert state.task == "上一轮已完成"
 
 
+def test_codex_error_complete_not_shown_as_completed(tmp_path, monkeypatch):
+    """task_complete 带 error 时状态是 error，文案不能说"已完成"（自相矛盾）。"""
+    sessions = tmp_path / "sessions" / "2026" / "11" / "13"
+    sessions.mkdir(parents=True)
+    log = sessions / "rollout-err.jsonl"
+    now = time.time()
+    log.write_text("\n".join([
+        json.dumps({"type": "event_msg", "payload": {"type": "task_started", "started_at": now - 60}}),
+        json.dumps({"type": "event_msg", "payload": {"type": "task_complete", "started_at": now - 60,
+                                                    "completed_at": now - 10, "error": True,
+                                                    "last_agent_message": "回复正文绝不能上墙"}}),
+    ]), encoding="utf-8")
+    from kindle_mcp_dashboard.plugins import codex
+    monkeypatch.setattr(codex, "CODEX_DIR", tmp_path)
+    monkeypatch.setattr(codex, "_active_workspace", lambda: "demo")
+    codex._codex_cache.update({"key": None, "value": None})
+
+    state = codex.state()
+    assert state.status == "error"
+    assert state.confidence == "high"
+    assert state.task == "上一轮出错"
+    assert "已完成" not in state.task
+    assert "回复正文" not in str(state.task)
+
+
 def test_opencode_disconnects_when_db_missing(tmp_path, monkeypatch):
     from kindle_mcp_dashboard.plugins import opencode
     monkeypatch.setattr(opencode, "OPENCODE_DB", tmp_path / "missing.db")

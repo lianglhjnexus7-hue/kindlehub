@@ -109,11 +109,13 @@ def state() -> AgentState:
             out.confidence = "medium"
             out.basis = "任务无结束事件，但已停止写入（可能被中断）"
     elif last_complete:
-        out.status = "error" if last_complete.get("error") else "idle"
+        errored = bool(last_complete.get("error"))
+        out.status = "error" if errored else "idle"
         out.confidence = "high"
-        out.basis = "收到任务完成事件" + ("（带错误）" if last_complete.get("error") else "")
-        # 对话正文绝不上墙：last_agent_message 是模型回复，只用静态文案
-        out.task = "上一轮已完成"
+        out.basis = "收到任务完成事件" + ("（带错误）" if errored else "")
+        # 对话正文绝不上墙：last_agent_message 是模型回复，只用静态文案。
+        # 出错时不能说"已完成"，否则与 error 状态自相矛盾。
+        out.task = "上一轮出错" if errored else "上一轮已完成"
     else:
         out.status = "idle" if age < STALE_WINDOW else "unknown"
         out.confidence = "low"
