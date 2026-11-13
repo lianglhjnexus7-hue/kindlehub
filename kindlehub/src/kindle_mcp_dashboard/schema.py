@@ -11,6 +11,10 @@ from copy import deepcopy
 from typing import Any
 
 CANVAS_WIDTH = 1000
+# 设备原生像素上界：真实墨水屏面板最高约 2480px（Kindle Scribe），4096 已经
+# 覆盖到 4K 屏。渲染端 Image.new 按 width*height 分配内存，不设上界时一个
+# 巨大正整数就能抛 MemoryError 甚至 OOM 杀进程；4096² 仅约 16.7MB，安全。
+MAX_DEVICE_DIM = 4096
 # 有序 list（不是 set）：渲染器按这个顺序处理，后台下拉框也按这个顺序展示
 KINDS = ["text", "metric", "status", "progress", "list", "image"]
 
@@ -43,8 +47,10 @@ def validate_dashboard(value: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(device, dict):
         raise DashboardError("device must be an object")
     for key in ("width", "height"):
-        if not isinstance(device.get(key), int) or device[key] <= 0:
-            raise DashboardError(f"device.{key} must be a positive integer")
+        dim = device.get(key)
+        if not isinstance(dim, int) or not 1 <= dim <= MAX_DEVICE_DIM:
+            raise DashboardError(
+                f"device.{key} must be an integer between 1 and {MAX_DEVICE_DIM}")
     # top_inset 会被 canvas_height 做 int()；非数值真值会抛 ValueError/TypeError，
     # 而调用方只捕获 DashboardError，会直接丢连接。None 由 `or 0` 安全归零，放行。
     inset = device.get("top_inset")

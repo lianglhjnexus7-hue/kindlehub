@@ -461,6 +461,29 @@ def test_schema_accepts_moderately_nested_config():
     assert render_png(checked, fetch=False).startswith(b"\x89PNG")
 
 
+@pytest.mark.parametrize("key", ["width", "height"])
+@pytest.mark.parametrize("value", [0, -1, 4097, 50000, 10**9])
+def test_schema_rejects_out_of_range_device_dim(key, value):
+    """device.width/height 无上界时，巨大正整数让 render 的 Image.new 抛
+    MemoryError（/api/preview 丢连接），中等巨值还可能 OOM 杀进程。"""
+    data = deepcopy(DEFAULT_DASHBOARD)
+    data["device"][key] = value
+    with pytest.raises(DashboardError):
+        validate_dashboard(data)
+
+
+def test_schema_accepts_max_device_dim():
+    """上界 4096 必须放行并能正常渲染，不能误伤合法的大面板配置。"""
+    data = deepcopy(DEFAULT_DASHBOARD)
+    data["device"]["width"] = 4096
+    data["device"]["height"] = 4096
+    data["device"]["top_inset"] = 0
+    data["screens"][0]["regions"] = [
+        {"id": "t", "kind": "text", "x": 0, "y": 0, "w": 10, "h": 10, "value": "hi"}]
+    checked = validate_dashboard(data)
+    assert render_png(checked, fetch=False).startswith(b"\x89PNG")
+
+
 def test_image_decompression_bomb_is_skipped(monkeypatch):
     """超大图片触发 DecompressionBombError 时只跳过该图，不拖垮整帧。"""
     from PIL import Image

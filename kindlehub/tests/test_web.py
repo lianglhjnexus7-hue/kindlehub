@@ -198,6 +198,17 @@ def test_put_rejects_deeply_nested_config(server):
     assert "nested" in json.loads(body)["error"]
 
 
+def test_preview_rejects_oversized_device(server):
+    """巨大 device 尺寸让 render 的 Image.new 抛 MemoryError，/api/preview
+    无兜底会丢连接；现在必须在边界返回 400。"""
+    draft = json.loads(json.dumps(DEFAULT_DASHBOARD))
+    draft["device"]["width"] = 10**9
+    draft["device"]["height"] = 10**9
+    status, body = send(server, "/api/preview", "POST", draft)
+    assert status == 400
+    assert "width" in json.loads(body)["error"]
+
+
 def test_put_rejects_out_of_bounds_region(server):
     bad = json.loads(json.dumps(DEFAULT_DASHBOARD))
     bad["screens"][0]["regions"][0]["w"] = 5000
