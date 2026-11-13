@@ -33,6 +33,7 @@ from __future__ import annotations
 import base64
 import json
 import subprocess
+import urllib.error
 import urllib.request
 from typing import Any
 
@@ -127,8 +128,11 @@ def publish(png: bytes, cfg: dict[str, Any]) -> str:
         try:
             _s, ref = _api("GET", base + "/git/ref/heads/" + branch, token)
             parent = ref["object"]["sha"]
-        except Exception:
-            parent = None
+        except urllib.error.HTTPError as exc:
+            # 仅 404 表示分支不存在（随后新建）；鉴权/网络等错误如实抛出，
+            # 不能误判成「无分支」而走 POST refs 撞 422，掩盖真因。
+            if exc.code != 404:
+                raise
         # 只含当前帧的全新 tree：不带 base_tree，遗留文件（含可猜路径）一并清除
         _s, tree = _api("POST", base + "/git/trees", token,
                         {"tree": [{"path": path, "mode": "100644", "type": "blob", "sha": blob["sha"]}]})

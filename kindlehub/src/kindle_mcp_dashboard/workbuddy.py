@@ -31,7 +31,7 @@ TTL = 120.0        # 成功结果缓存 2 分钟
 FAIL_TTL = 30.0    # 失败只缓存 30 秒，看板恢复后能尽快跟上
 TOKEN_TTL = 1800.0
 
-_payload: dict[str, Any] = {"key": None, "at": -1e9, "data": None, "ttl": 0.0}
+_payload: dict[str, Any] = {"key": None, "at": -1e9, "data": None, "err": "", "ttl": 0.0}
 _token: dict[str, Any] = {"value": None, "at": -1e9, "base": None}
 
 
@@ -184,9 +184,9 @@ def _load(settings: dict[str, Any], fetch: bool, force: bool) -> tuple[dict | No
     now = time.monotonic()
     # 与 credits 同理：force 只跳过"未过期就复用"，TTL 内的缓存照样命中，
     # 预热循环的 force=True 不会把 analytics 请求放大成每 60 秒一次。
-    if (_payload["key"] == key and _payload["data"] is not None
-            and now - _payload["at"] < _payload["ttl"]):
-        return _payload["data"], ""
+    if (_payload["key"] == key and now - _payload["at"] < _payload["ttl"]
+            and (_payload["data"] is not None or _payload["err"])):
+        return _payload["data"], _payload["err"]
     if not fetch:
         return _payload["data"] if _payload["key"] == key else None, ""
 
@@ -194,7 +194,7 @@ def _load(settings: dict[str, Any], fetch: bool, force: bool) -> tuple[dict | No
         """已有旧数据时优先返回它，只推迟重试。
         否则看板一次重启就会把整块明细刷成"看板未连接"。"""
         if _payload["data"] is not None and _payload["key"] == key:
-            _payload.update({"at": now, "ttl": FAIL_TTL})
+            _payload.update({"at": now, "err": "", "ttl": FAIL_TTL})
             return _payload["data"], ""
         return None, "看板未连接"
 
@@ -221,7 +221,7 @@ def _load(settings: dict[str, Any], fetch: bool, force: bool) -> tuple[dict | No
     except Exception:
         return stale()
 
-    _payload.update({"key": key, "at": now, "data": data, "ttl": TTL})
+    _payload.update({"key": key, "at": now, "data": data, "err": "", "ttl": TTL})
     return data, ""
 
 
@@ -230,7 +230,12 @@ def _fail(settings: dict[str, Any], text: str) -> str:
     config = settings.get("workbuddy") or {}
     base = str(config.get("url") or DEFAULT_URL)
     span = str(config.get("range") or DEFAULT_RANGE)
-    _payload.update({"key": f"{base}|{span}", "at": time.monotonic(), "data": None, "ttl": FAIL_TTL})
+    key = f"{base}|{span}"
+    now = time.monotonic()
+    # 已在失败缓存窗口内就不重置时间戳：否则每轮渲染都续期，FAIL_TTL 永不到期、永不重试。
+    if not (_payload["key"] == key and _payload["data"] is None
+            and _payload["err"] and now - _payload["at"] < _payload["ttl"]):
+        _payload.update({"key": key, "at": now, "data": None, "err": text, "ttl": FAIL_TTL})
     return text
 
 

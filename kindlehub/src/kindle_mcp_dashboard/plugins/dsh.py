@@ -138,11 +138,8 @@ def state() -> AgentState:
         out.confidence = "low"
         out.basis = "未找到 turn 边界事件"
 
-    title = summary["title"]
-    # 有些会话的"标题"其实是用户输入的第一句 prompt，
-    # 直接显示会把对话内容带上墙，这类一律不显示。
-    if title and not title.startswith(("你", "请", "帮我", "我们", "这是", "现在")):
-        out.task = _short(title)
+    # 会话"标题"常常就是用户输入的第一句 prompt，无法可靠区分标题与正文。
+    # 画面会经中继推到公开 URL，绝不能带会话内容，故一律不把标题上墙。
     return out
 
 

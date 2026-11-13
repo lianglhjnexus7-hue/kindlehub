@@ -36,7 +36,8 @@ STAGE_MAP = {
 
 def _read(path: Path) -> dict | None:
     try:
-        return json.loads(path.read_text(encoding="utf-8")) or {}
+        doc = json.loads(path.read_text(encoding="utf-8"))
+        return doc if isinstance(doc, dict) else {}
     except (OSError, ValueError, TypeError):
         return None
 

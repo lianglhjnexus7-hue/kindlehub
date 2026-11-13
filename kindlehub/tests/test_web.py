@@ -112,6 +112,20 @@ def test_screen_png_is_native_panel_size(server):
     assert image.mode == "L"
 
 
+def test_render_cache_keyed_by_draw_bar(server, monkeypatch):
+    """bar=0 基线页应命中 45 秒缓存；bar=0 与 bar=1 是两张图，绝不能串图。"""
+    from kindle_mcp_dashboard import web
+    monkeypatch.setattr(web, "_render_cache", {"data": None, "at": 0.0, "bar": True})
+    s1, b1, _ = get(server, "/screen.png?bar=0")
+    s2, b2, _ = get(server, "/screen.png?bar=0")
+    assert s1 == s2 == 200
+    assert b1 == b2, "bar=0 基线页应在 TTL 内复用缓存"
+    assert web._render_cache["bar"] is False, "缓存应记录 bar=0"
+    s3, b3, _ = get(server, "/screen.png?bar=1")
+    assert s3 == 200
+    assert b3 != b1, "bar=1 与 bar=0 必须是不同的图（状态栏不同）"
+
+
 def test_state_is_readable_locally(server):
     status, body, _ = get(server, "/api/state")
     assert status == 200
@@ -337,3 +351,53 @@ def test_relay_publish_refuses_guessable_path(monkeypatch):
     monkeypatch.setattr(gist_relay, "gh_token", lambda: "token")
     msg = gist_relay.publish(b"png", {"enabled": True, "repo": "owner/repo", "path": "screen.png"})
     assert "可猜" in msg
+
+
+def test_relay_publish_non404_ref_error_not_masked(monkeypatch):
+    """GET ref 遇鉴权/网络错误（非 404）必须如实失败，不能误判成「无分支」
+    而走 POST refs 撞 422 掩盖真因。"""
+    import urllib.error
+    from kindle_mcp_dashboard import gist_relay
+    monkeypatch.setattr(gist_relay, "gh_token", lambda: "token")
+
+    def fake_api(method, url, token, body=None):
+        if url.endswith("/git/blobs"):
+            return 201, {"sha": "blobsha"}
+        if method == "GET" and "/git/ref/heads/" in url:
+            raise urllib.error.HTTPError(url, 401, "Unauthorized", {}, None)
+        raise AssertionError(f"非 404 后不应继续调用 {method} {url}")
+
+    monkeypatch.setattr(gist_relay, "_api", fake_api)
+    cfg = {"enabled": True, "repo": "owner/repo",
+           "path": "relay/0123456789abcdef.png", "branch": "relay"}
+    msg = gist_relay.publish(b"png", cfg)
+    assert "失败" in msg and "401" in msg
+
+
+def test_relay_publish_creates_branch_on_404(monkeypatch):
+    """分支不存在（404）时新建根提交并 POST refs。"""
+    import urllib.error
+    from kindle_mcp_dashboard import gist_relay
+    monkeypatch.setattr(gist_relay, "gh_token", lambda: "token")
+    calls = []
+
+    def fake_api(method, url, token, body=None):
+        calls.append((method, url, body))
+        if url.endswith("/git/blobs"):
+            return 201, {"sha": "blobsha"}
+        if method == "GET" and "/git/ref/heads/" in url:
+            raise urllib.error.HTTPError(url, 404, "Not Found", {}, None)
+        if url.endswith("/git/trees"):
+            return 201, {"sha": "treesha"}
+        if url.endswith("/git/commits"):
+            return 201, {"sha": "commitsha"}
+        return 200, {}
+
+    monkeypatch.setattr(gist_relay, "_api", fake_api)
+    cfg = {"enabled": True, "repo": "owner/repo",
+           "path": "relay/0123456789abcdef.png", "branch": "relay"}
+    msg = gist_relay.publish(b"png", cfg)
+    assert "已发布" in msg
+    commits = [b for (m, u, b) in calls if u.endswith("/git/commits")]
+    assert "parents" not in commits[0]
+    assert any(m == "POST" and u.endswith("/git/refs") for (m, u, b) in calls)

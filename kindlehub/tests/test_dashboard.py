@@ -7,6 +7,8 @@ from copy import deepcopy
 import json
 from pathlib import Path
 
+import pytest
+
 from kindle_mcp_dashboard.defaults import DEFAULT_DASHBOARD
 from kindle_mcp_dashboard.renderer import _box, _wrap, _font, render_dashboard, render_png
 from kindle_mcp_dashboard.schema import DashboardError, canvas_height, validate_dashboard
@@ -191,3 +193,60 @@ def test_ey21_package_matches_confirmed_firmware():
     menu = json.loads((root / "kindle/ey21-5.6.1.1/extensions/kindle-dashboard/menu.json").read_text())
     for item in menu["items"]:
         assert (root / "kindle/ey21-5.6.1.1/extensions/kindle-dashboard" / item["action"]).exists()
+
+
+def test_rejects_nan_coordinate():
+    """NaN 的所有比较均为 False，会绕过 <=0 / >canvas 校验；渲染时
+    round(nan*scale) 抛错且坏配置被持久化，每帧必败。必须在校验层拒收。"""
+    data = deepcopy(DEFAULT_DASHBOARD)
+    data["screens"][0]["regions"][0]["w"] = float("nan")
+    with pytest.raises(DashboardError):
+        validate_dashboard(data)
+
+
+def test_rejects_infinite_coordinate():
+    data = deepcopy(DEFAULT_DASHBOARD)
+    data["screens"][0]["regions"][0]["x"] = float("inf")
+    with pytest.raises(DashboardError):
+        validate_dashboard(data)
+
+
+def test_rejects_non_dict_payloads():
+    """非 dict 载荷必须抛 DashboardError（→400），而非 AttributeError（→500+traceback）。"""
+    for bad in ([], "x", 5, None):
+        with pytest.raises(DashboardError):
+            validate_dashboard(bad)
+    data = deepcopy(DEFAULT_DASHBOARD)
+    data["device"] = []
+    with pytest.raises(DashboardError):
+        validate_dashboard(data)
+    data = deepcopy(DEFAULT_DASHBOARD)
+    data["screens"] = [None]
+    with pytest.raises(DashboardError):
+        validate_dashboard(data)
+    data = deepcopy(DEFAULT_DASHBOARD)
+    data["screens"][0]["regions"] = [5]
+    with pytest.raises(DashboardError):
+        validate_dashboard(data)
+
+
+def test_progress_unknown_source_renders_zero():
+    """progress 的 source 解析为"未知"时不能 float() 抛错毁掉整帧。"""
+    data = deepcopy(DEFAULT_DASHBOARD)
+    data["screens"][0]["regions"] = [
+        {"id": "p", "kind": "progress", "x": 0, "y": 0, "w": 1000, "h": 200,
+         "source": "nonexistent.source"}
+    ]
+    data = validate_dashboard(data)
+    assert render_png(data, fetch=False).startswith(b"\x89PNG")
+
+
+def test_list_items_null_renders():
+    """items 显式为 null 时 region.get 返回 None，enumerate(None) 会 TypeError。"""
+    data = deepcopy(DEFAULT_DASHBOARD)
+    data["screens"][0]["regions"] = [
+        {"id": "l", "kind": "list", "x": 0, "y": 0, "w": 1000, "h": 400,
+         "items": None}
+    ]
+    data = validate_dashboard(data)
+    assert render_png(data, fetch=False).startswith(b"\x89PNG")

@@ -110,6 +110,27 @@ def test_dsh_caches_summary_not_whole_session(tmp_path, monkeypatch):
     assert cached["turn_open"] is False
 
 
+@needs_zstd
+def test_dsh_title_never_leaks_prompt_to_wall(tmp_path, monkeypatch):
+    """会话标题常是用户首句 prompt；画面经中继上公开 URL，标题一律不上墙。
+    旧实现只挡 6 个中文前缀，英文 prompt 会泄漏（与 claude.py 的 task=None 不一致）。"""
+    root = tmp_path / "sessions"
+    sess = root / "demo" / "s1"
+    sess.mkdir(parents=True)
+    prompt = "Fix the login bug and refactor auth"
+    events = [
+        {"type": "session/title", "title": prompt},
+        {"type": "turn/start"},
+        {"type": "turn/end"},
+    ]
+    _write_zst(sess / "session.v4.jsonl.zstd", events)
+    from kindle_mcp_dashboard.plugins import dsh
+    monkeypatch.setattr(dsh, "DSH_SESSIONS", root)
+    dsh._dsh_cache.update({"key": None, "value": None})
+    st = dsh.state()
+    assert st.task is None, "标题（可能是 prompt）绝不能上墙"
+
+
 def test_codex_finds_task_started_beyond_800_events(tmp_path, monkeypatch):
     """长 turn 把 task_started 挤出 800 条尾部窗口时，全量扫描仍要找到它。"""
     sessions = tmp_path / "sessions" / "2026" / "11" / "11"
@@ -349,5 +370,25 @@ def test_workbuddy_refuses_remote_http():
     assert workbuddy._safe_base("http://127.0.0.1:8788")
     assert workbuddy._safe_base("https://board.example.com")
     assert not workbuddy._safe_base("http://board.example.com")
+
+
+def test_workbuddy_fail_cache_throttles_relogin(monkeypatch):
+    """失败后 FAIL_TTL 内必须复用缓存，不能每轮渲染都重登录（3× 放大）。"""
+    from kindle_mcp_dashboard import workbuddy
+    workbuddy._payload.update({"key": None, "at": -1e9, "data": None, "err": "", "ttl": 0.0})
+    settings = {"workbuddy": {"url": "http://127.0.0.1:8788", "range": "today", "enabled": True}}
+    monkeypatch.setattr(workbuddy.secrets, "get", lambda k: "pw")
+    logins = {"n": 0}
+
+    def fake_login(*a, **k):
+        logins["n"] += 1
+        return None  # 登录失败
+
+    monkeypatch.setattr(workbuddy, "_login", fake_login)
+    t1 = workbuddy.current(settings, fetch=True)
+    assert logins["n"] == 1
+    t2 = workbuddy.current(settings, fetch=True)
+    assert logins["n"] == 1, "FAIL_TTL 内不应再次登录"
+    assert t1 == t2
     settings = {"workbuddy": {"url": "http://board.example.com", "enabled": True}}
     assert "https" in workbuddy.current(settings, fetch=True)

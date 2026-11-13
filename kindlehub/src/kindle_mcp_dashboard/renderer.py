@@ -200,7 +200,10 @@ def _draw_region(draw: ImageDraw.ImageDraw, region: dict[str, Any], values: dict
         if unit and kind == "metric":
             draw.text((x + w - pad, y + h - pad), unit, font=_font(18), fill=muted, anchor="rs")
     elif kind == "progress":
-        percent = max(0, min(100, float(value or 0)))
+        try:
+            percent = max(0, min(100, float(value or 0)))
+        except (TypeError, ValueError):
+            percent = 0
         value_font = _font(int(region.get("size", 36)), bold=True)
         draw.text((content_x, cursor_y), f"{percent:.0f}%", font=value_font, fill=fg)
         bar_h = max(12, round(height * 0.022))
@@ -209,7 +212,11 @@ def _draw_region(draw: ImageDraw.ImageDraw, region: dict[str, Any], values: dict
         fill_w = round((w - pad * 2 - 6) * percent / 100)
         draw.rectangle((x + pad + 3, bar_y + 3, x + pad + 3 + fill_w, bar_y + bar_h - 3), fill=0)
     elif kind == "list":
-        items = region.get("items", value if isinstance(value, list) else [value])
+        items = region.get("items")
+        if items is None:
+            items = value if isinstance(value, list) else [value]
+        elif not isinstance(items, list):
+            items = [items]
         item_font = _font(int(region.get("size", 23)))
         line_h = _line_height(item_font) + max(7, round(height * 0.009))
         for index, item in enumerate(items):

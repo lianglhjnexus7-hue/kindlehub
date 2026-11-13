@@ -38,7 +38,7 @@ LOOPBACK = {"127.0.0.1", "::1"}
 _last_png: dict[str, bytes | None] = {"data": None}
 # 渲染缓存：Kindle 重载页面时会连发 /kindle 与 /screen.png 两个请求，
 # 短时间内复用同一张图，既省 CPU 也减少无谓的整页重绘（对 e-ink 残影友好）。
-_render_cache: dict[str, Any] = {"data": None, "at": 0.0}
+_render_cache: dict[str, Any] = {"data": None, "at": 0.0, "bar": True}
 # 显示页上报的设备能力（仅内存，最多留 20 条）
 _device_reports: list[dict[str, Any]] = []
 # 1x1 透明 GIF：给设备上报当探针用，避免 404 刷错误日志
@@ -226,10 +226,10 @@ def make_server(host: str = "0.0.0.0", port: int = 8787, refresh: int = 60,
                 draw_bar = (q.get("bar") or ["1"])[0] not in {"0", "false"}
                 # 局部刷新（JS）带 _= 序号参数，明确要求新图；
                 # 整页重载不带，仍走 45 秒渲染缓存。
-                if extra or not draw_bar or "cache=0" in urlparse(self.path).query:
+                if extra or "cache=0" in urlparse(self.path).query:
                     self._send(HTTPStatus.OK, "image/png", self._render(store, extra, draw_bar))
                 else:
-                    self._send(HTTPStatus.OK, "image/png", self._render_cached(store))
+                    self._send(HTTPStatus.OK, "image/png", self._render_cached(store, draw_bar))
             elif path == "/health":
                 self._send(HTTPStatus.OK, "application/json", b'{"status":"ok"}')
             elif path == "/api/device":
@@ -382,12 +382,14 @@ def make_server(host: str = "0.0.0.0", port: int = 8787, refresh: int = 60,
 
         # ---------- 工具 ----------
 
-        def _render_cached(self, store: DashboardStore) -> bytes:
+        def _render_cached(self, store: DashboardStore, draw_bar: bool = True) -> bytes:
             now = time.time()
-            if _render_cache["data"] and now - _render_cache["at"] < RENDER_TTL:
+            # 缓存按 draw_bar 键控：bar=0 与 bar=1 是两张不同的图，绝不能混用
+            if (_render_cache["data"] and _render_cache["bar"] == draw_bar
+                    and now - _render_cache["at"] < RENDER_TTL):
                 return _render_cache["data"]
-            png = self._render(store)
-            _render_cache.update({"data": png, "at": now})
+            png = self._render(store, draw_bar=draw_bar)
+            _render_cache.update({"data": png, "at": now, "bar": draw_bar})
             return png
 
         def _render(self, store: DashboardStore, extra: dict | None = None,

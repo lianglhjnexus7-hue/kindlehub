@@ -6,6 +6,7 @@
 """
 from __future__ import annotations
 
+import math
 from copy import deepcopy
 from typing import Any
 
@@ -29,8 +30,12 @@ def canvas_height(device: dict[str, Any]) -> float:
 
 
 def validate_dashboard(value: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise DashboardError("dashboard must be an object")
     data = deepcopy(value)
     device = data.get("device", {})
+    if not isinstance(device, dict):
+        raise DashboardError("device must be an object")
     for key in ("width", "height"):
         if not isinstance(device.get(key), int) or device[key] <= 0:
             raise DashboardError(f"device.{key} must be a positive integer")
@@ -48,6 +53,8 @@ def validate_dashboard(value: dict[str, Any]) -> dict[str, Any]:
         raise DashboardError("screens must be a non-empty list")
     screen_ids: set[str] = set()
     for screen in screens:
+        if not isinstance(screen, dict):
+            raise DashboardError("each screen must be an object")
         sid = _identifier(screen.get("id"), "screen.id")
         if sid in screen_ids:
             raise DashboardError(f"duplicate screen id: {sid}")
@@ -57,6 +64,8 @@ def validate_dashboard(value: dict[str, Any]) -> dict[str, Any]:
             raise DashboardError(f"screen {sid} regions must be a list")
         region_ids: set[str] = set()
         for region in regions:
+            if not isinstance(region, dict):
+                raise DashboardError("each region must be an object")
             rid = _identifier(region.get("id"), f"screen {sid} region.id")
             if rid in region_ids:
                 raise DashboardError(f"duplicate region id in {sid}: {rid}")
@@ -65,8 +74,8 @@ def validate_dashboard(value: dict[str, Any]) -> dict[str, Any]:
                 raise DashboardError(f"region {rid} has unsupported kind")
             for key in ("x", "y", "w", "h"):
                 number = region.get(key)
-                if not isinstance(number, (int, float)):
-                    raise DashboardError(f"region {rid}.{key} must be numeric")
+                if not isinstance(number, (int, float)) or not math.isfinite(number):
+                    raise DashboardError(f"region {rid}.{key} must be a finite number")
             if region["w"] <= 0 or region["h"] <= 0:
                 raise DashboardError(f"region {rid} must have positive size")
             if (region["x"] < 0 or region["y"] < 0
