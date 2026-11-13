@@ -445,7 +445,9 @@ def make_server(host: str = "0.0.0.0", port: int = 8787, refresh: int = 60,
                 return None
             try:
                 return json.loads(self.rfile.read(length).decode("utf-8"))
-            except (UnicodeDecodeError, json.JSONDecodeError):
+            except (UnicodeDecodeError, json.JSONDecodeError, RecursionError):
+                # 深层嵌套（1MiB 内可达数十万层）会让 json.loads 抛 RecursionError，
+                # 不捕获就会逃逸出 do_PUT/do_POST 直接丢连接
                 self._json(HTTPStatus.BAD_REQUEST, {"error": "请求体不是合法 JSON"})
                 return None
 

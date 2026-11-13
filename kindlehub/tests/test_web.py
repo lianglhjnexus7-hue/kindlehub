@@ -177,6 +177,15 @@ def test_put_rejects_invalid_json(server):
     assert status == 400
 
 
+def test_put_rejects_deeply_nested_json(server):
+    """深层嵌套 JSON 让 json.loads 抛 RecursionError；不捕获会丢连接而非返回 400。
+    20 万层远超 recursionlimit，body 40 万字节仍远在 1MiB 上限内。"""
+    payload = b"[" * 200000 + b"]" * 200000
+    status, body = send(server, "/api/state", "PUT", payload)
+    assert status == 400
+    assert "JSON" in json.loads(body)["error"]
+
+
 def test_put_rejects_out_of_bounds_region(server):
     bad = json.loads(json.dumps(DEFAULT_DASHBOARD))
     bad["screens"][0]["regions"][0]["w"] = 5000
