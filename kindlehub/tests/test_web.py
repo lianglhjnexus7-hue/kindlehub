@@ -248,6 +248,17 @@ def test_preview_rejects_non_numeric_size(server):
         assert "size" in json.loads(body)["error"]
 
 
+def test_preview_rejects_unhashable_source(server):
+    """source 为不可哈希真值时 resolve() 的 values.get 抛 TypeError，
+    render_png 无兜底会丢连接；现在必须在边界返回 400。"""
+    for bad_source in ([1], {"a": 1}, ["system.time"]):
+        draft = json.loads(json.dumps(DEFAULT_DASHBOARD))
+        draft["screens"][0]["regions"][0]["source"] = bad_source
+        status, body = send(server, "/api/preview", "POST", draft)
+        assert status == 400, f"source={bad_source!r} 导致 {status}"
+        assert "source" in json.loads(body)["error"]
+
+
 def test_screen_png_survives_hostile_battery_param(server):
     """batt=²（isdigit 放行但 int 拒收）与超长数字串都不能把渲染打崩。"""
     import urllib.parse

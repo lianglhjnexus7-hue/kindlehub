@@ -97,6 +97,11 @@ def validate_dashboard(value: dict[str, Any]) -> dict[str, Any]:
                     number = region[key]
                     if not isinstance(number, (int, float)) or not math.isfinite(number):
                         raise DashboardError(f"region {rid}.{key} must be a finite number")
+            # source 是数据源标识，resolve() 拿它做 values.get(source)；非空 list/dict
+            # 等不可哈希真值会抛 TypeError 而非 DashboardError，/api/preview 的 render_png
+            # 没有兜底会直接丢连接。缺省/空串由 resolve 当"未绑定"安全处理，放行。
+            if "source" in region and not isinstance(region["source"], str):
+                raise DashboardError(f"region {rid}.source must be a string")
     # 先确认是字符串再做集合成员判断：list/dict 等不可哈希值会让 `in set`
     # 抛 TypeError 而非 DashboardError，调用方只捕获后者，会直接丢连接。
     active = data.get("active_screen")

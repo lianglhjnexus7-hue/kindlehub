@@ -391,6 +391,31 @@ def test_schema_rejects_non_string_active_screen(value):
         validate_dashboard(data)
 
 
+@pytest.mark.parametrize("value", [[1], {"a": 1}, ["system.time"], 5, True, None])
+def test_schema_rejects_non_string_source(value):
+    """region.source 非字符串时 resolve() 的 values.get(source) 对不可哈希真值
+    抛 TypeError；validate 放行后 /api/preview 的 render_png 无兜底会丢连接。"""
+    data = deepcopy(DEFAULT_DASHBOARD)
+    data["screens"][0]["regions"] = [
+        {"id": "t", "kind": "text", "x": 0, "y": 0, "w": 1000, "h": 600,
+         "value": "hello", "source": value}]
+    with pytest.raises(DashboardError):
+        validate_dashboard(data)
+
+
+def test_schema_accepts_string_empty_and_absent_source():
+    """正常字符串源、空串与缺省（未绑定）都必须放行，且能正常渲染。"""
+    for source in ("system.time", "", None):
+        data = deepcopy(DEFAULT_DASHBOARD)
+        region = {"id": "t", "kind": "text", "x": 0, "y": 0, "w": 1000, "h": 600,
+                  "value": "hello"}
+        if source is not None:
+            region["source"] = source
+        data["screens"][0]["regions"] = [region]
+        checked = validate_dashboard(data)
+        assert render_png(checked, fetch=False).startswith(b"\x89PNG")
+
+
 def test_image_decompression_bomb_is_skipped(monkeypatch):
     """超大图片触发 DecompressionBombError 时只跳过该图，不拖垮整帧。"""
     from PIL import Image
