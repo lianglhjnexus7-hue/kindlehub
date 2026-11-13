@@ -126,39 +126,44 @@ def credits(settings: dict[str, Any], fetch: bool = True, force: bool = False) -
     except Exception:
         return _credits_cache["data"] if _credits_cache["key"] == base else None
 
-    # 国际版与国内版是两套账号池，积分不能混算
-    by_realm: dict[str, dict[str, float]] = {}
-    for account in payload.get("accounts") or []:
-        block = account.get("credits")
-        if not isinstance(block, dict):
-            continue
-        realm = str(account.get("realm") or "unknown")
-        slot = by_realm.setdefault(realm, {"remain": 0.0, "size": 0.0, "accounts": 0})
-        r, s = block.get("remain"), block.get("size")
-        if isinstance(r, (int, float)):
-            slot["remain"] += float(r)
-        if isinstance(s, (int, float)):
-            slot["size"] += float(s)
-        slot["accounts"] += 1
-    if not by_realm:
+    # 国际版与国内版是两套账号池，积分不能混算。
+    # 畸形响应（payload 非 dict、accounts 非列表、account 非 dict）只返回 None，
+    # 不崩帧也不编造余额。
+    try:
+        by_realm: dict[str, dict[str, float]] = {}
+        for account in payload.get("accounts") or []:
+            block = account.get("credits")
+            if not isinstance(block, dict):
+                continue
+            realm = str(account.get("realm") or "unknown")
+            slot = by_realm.setdefault(realm, {"remain": 0.0, "size": 0.0, "accounts": 0})
+            r, s = block.get("remain"), block.get("size")
+            if isinstance(r, (int, float)):
+                slot["remain"] += float(r)
+            if isinstance(s, (int, float)):
+                slot["size"] += float(s)
+            slot["accounts"] += 1
+        if not by_realm:
+            return None
+
+        # 各区域的今日消耗。/usage/analytics 支持 realm 参数，
+        # 但返回体 ~140KB，所以只对实际存在的区域各取一次，并跟随 2 分钟缓存。
+        for realm in list(by_realm):
+            try:
+                payload = _request(
+                    f"{base.rstrip('/')}/usage/analytics?range={span}&realm={realm}", token=token)
+                window = (payload.get("summary") or {}).get("window") or {}
+                by_realm[realm]["today_credit"] = float(window.get("credit") or 0.0)
+                by_realm[realm]["today_cost"] = float(window.get("cost_cny") or 0.0)
+            except Exception:
+                by_realm[realm]["today_credit"] = None
+                by_realm[realm]["today_cost"] = None
+
+        result = {"realms": by_realm}
+        _credits_cache.update({"key": base, "at": now, "data": result})
+        return result
+    except Exception:
         return None
-
-    # 各区域的今日消耗。/usage/analytics 支持 realm 参数，
-    # 但返回体 ~140KB，所以只对实际存在的区域各取一次，并跟随 2 分钟缓存。
-    for realm in list(by_realm):
-        try:
-            payload = _request(
-                f"{base.rstrip('/')}/usage/analytics?range={span}&realm={realm}", token=token)
-            window = (payload.get("summary") or {}).get("window") or {}
-            by_realm[realm]["today_credit"] = float(window.get("credit") or 0.0)
-            by_realm[realm]["today_cost"] = float(window.get("cost_cny") or 0.0)
-        except Exception:
-            by_realm[realm]["today_credit"] = None
-            by_realm[realm]["today_cost"] = None
-
-    result = {"realms": by_realm}
-    _credits_cache.update({"key": base, "at": now, "data": result})
-    return result
 
 
 def _short(value: float) -> str:
@@ -250,25 +255,30 @@ def current(settings: dict[str, Any], fetch: bool = True, force: bool = False) -
     if data is None:
         return "获取中…" if not fetch else "看板未连接"
 
-    window = (data.get("summary") or {}).get("window") or {}
-    requests = int(window.get("requests") or 0)
-    if not requests:
-        return "今日暂无请求"
-    errors = int(window.get("errors") or 0)
-    success = (1 - errors / requests) * 100
-    tokens = window.get("total_tokens") or 0
-    hit = window.get("cache_hit_pct")
-    if hit is None:
-        prompt = window.get("prompt_tokens") or 0
-        cached = window.get("cached_tokens") or 0
-        hit = (cached / prompt * 100) if prompt else 0.0
-    cost = window.get("cost_cny")
+    # 畸形外部响应一律降级，守住"任何失败不崩溃、不编造"的模块契约：
+    # 顶层非 dict、数值字段是字符串、summary/window 形状不对都只报错不崩帧。
+    try:
+        window = (data.get("summary") or {}).get("window") or {}
+        requests = int(window.get("requests") or 0)
+        if not requests:
+            return "今日暂无请求"
+        errors = int(window.get("errors") or 0)
+        success = (1 - errors / requests) * 100
+        tokens = window.get("total_tokens") or 0
+        hit = window.get("cache_hit_pct")
+        if hit is None:
+            prompt = window.get("prompt_tokens") or 0
+            cached = window.get("cached_tokens") or 0
+            hit = (cached / prompt * 100) if prompt else 0.0
+        cost = window.get("cost_cny")
 
-    lines = [f"请求 {requests} · 成功率 {success:.0f}%",
-             f"Token {_short(tokens)} · 缓存 {hit:.0f}%"]
-    if isinstance(cost, (int, float)) and cost > 0:
-        lines.append(f"花费 ¥{cost:.2f}")
-    return "\n".join(lines)
+        lines = [f"请求 {requests} · 成功率 {success:.0f}%",
+                 f"Token {_short(tokens)} · 缓存 {hit:.0f}%"]
+        if isinstance(cost, (int, float)) and cost > 0:
+            lines.append(f"花费 ¥{cost:.2f}")
+        return "\n".join(lines)
+    except Exception:
+        return _fail(settings, "看板数据异常") if fetch else "看板数据异常"
 
 
 def models(settings: dict[str, Any], fetch: bool = True, force: bool = False,
@@ -287,80 +297,85 @@ def models(settings: dict[str, Any], fetch: bool = True, force: bool = False,
     if data is None:
         return "获取中…" if not fetch else "看板未连接"
 
-    rows = []
-    for item in data.get("models") or []:
-        window = item.get("window") or {}
-        tokens = window.get("total_tokens") or 0
-        if not tokens:
-            continue
-        rows.append((tokens, item.get("model") or "?", window))
-    # 只按 tokens 比大小：元组后两项是 dict，tokens 和名字都相同时
-    # 继续比较会抛 TypeError
-    rows.sort(key=lambda r: -r[0])
-    if not rows:
-        return "今日暂无模型消耗"
-
-    span = str((settings.get("workbuddy") or {}).get("range") or DEFAULT_RANGE)
-    period = RANGE_CN.get(span, span)
-    lines = [f"统计周期：{period}", ""]
-    for _tokens, name, window in rows[:limit]:
-        requests = int(window.get("requests") or 0)
-        total = window.get("total_tokens") or 0
-        speed = window.get("speed_avg")
-        hit = window.get("cache_hit_pct")
-        reasoning = window.get("reasoning_tokens") or 0
-        cached = window.get("cached_tokens") or 0
-        cost = window.get("cost_cny")
-
-        # 首页只保留三个决策指标：调用次数、总 Token、费用。
-        # 速度/命中率/思考/缓存属于细节，放到 models_detail()。
-        parts = [f"{requests} 次", _short(total)]
-        if isinstance(cost, (int, float)) and cost > 0:
-            parts.append(f"¥{cost:.2f}")
-        else:
-            parts.append("费用未计价")
-        # 该模型消耗的积分（上游给的 credit 字段），0 也显示，保留两位小数
-        credit = window.get("credit")
-        if isinstance(credit, (int, float)):
-            parts.append(f"{credit:.2f} 积分")
-
-        lines.append(name)
-        lines.append(" · ".join(parts))
-
-        if detail:
-            extra = []
-            if isinstance(speed, (int, float)) and speed > 0:
-                extra.append(f"速度 {speed:.0f}tok/s")
-            if isinstance(hit, (int, float)):
-                extra.append(f"缓存命中率 {hit:.1f}%")
-            if reasoning:
-                extra.append(f"思考 Token {_short(reasoning)}")
-            if cached:
-                extra.append(f"缓存 Token {_short(cached)}")
-            credit = window.get("credit")
-            if isinstance(credit, (int, float)) and credit > 0:
-                extra.append(f"消耗 {credit:.1f} 积分")
-            if extra:
-                lines.append("   " + " · ".join(extra))
-
-    balance = credits(settings, fetch=fetch, force=force)
-    if balance:
-        realms = balance.get("realms") or {}
-        if realms:
-            lines.append("")
-        for realm, slot in sorted(realms.items(), key=lambda kv: -kv[1]["size"]):
-            size = slot.get("size") or 0
-            remain = slot.get("remain") or 0
-            if size <= 0:
+    # 与 current 同理：models 列表项非 dict、total_tokens 是字符串、
+    # 顶层非 dict 等都只降级报错，绝不把异常抛进渲染链路。
+    try:
+        rows = []
+        for item in data.get("models") or []:
+            window = item.get("window") or {}
+            tokens = window.get("total_tokens") or 0
+            if not tokens:
                 continue
-            label = REALM_CN.get(realm, realm)
-            pct = remain / size * 100
-            line = f"{label}积分 {remain:,.0f} / {size:,.0f}（剩 {pct:.0f}%）"
-            today = slot.get("today_credit")
-            if isinstance(today, (int, float)):
-                line += f" · 今日 {today:,.0f}"
-            lines.append(line)
-    return "\n".join(lines)
+            rows.append((tokens, item.get("model") or "?", window))
+        # 只按 tokens 比大小：元组后两项是 dict，tokens 和名字都相同时
+        # 继续比较会抛 TypeError
+        rows.sort(key=lambda r: -r[0])
+        if not rows:
+            return "今日暂无模型消耗"
+
+        span = str((settings.get("workbuddy") or {}).get("range") or DEFAULT_RANGE)
+        period = RANGE_CN.get(span, span)
+        lines = [f"统计周期：{period}", ""]
+        for _tokens, name, window in rows[:limit]:
+            requests = int(window.get("requests") or 0)
+            total = window.get("total_tokens") or 0
+            speed = window.get("speed_avg")
+            hit = window.get("cache_hit_pct")
+            reasoning = window.get("reasoning_tokens") or 0
+            cached = window.get("cached_tokens") or 0
+            cost = window.get("cost_cny")
+
+            # 首页只保留三个决策指标：调用次数、总 Token、费用。
+            # 速度/命中率/思考/缓存属于细节，放到 models_detail()。
+            parts = [f"{requests} 次", _short(total)]
+            if isinstance(cost, (int, float)) and cost > 0:
+                parts.append(f"¥{cost:.2f}")
+            else:
+                parts.append("费用未计价")
+            # 该模型消耗的积分（上游给的 credit 字段），0 也显示，保留两位小数
+            credit = window.get("credit")
+            if isinstance(credit, (int, float)):
+                parts.append(f"{credit:.2f} 积分")
+
+            lines.append(name)
+            lines.append(" · ".join(parts))
+
+            if detail:
+                extra = []
+                if isinstance(speed, (int, float)) and speed > 0:
+                    extra.append(f"速度 {speed:.0f}tok/s")
+                if isinstance(hit, (int, float)):
+                    extra.append(f"缓存命中率 {hit:.1f}%")
+                if reasoning:
+                    extra.append(f"思考 Token {_short(reasoning)}")
+                if cached:
+                    extra.append(f"缓存 Token {_short(cached)}")
+                credit = window.get("credit")
+                if isinstance(credit, (int, float)) and credit > 0:
+                    extra.append(f"消耗 {credit:.1f} 积分")
+                if extra:
+                    lines.append("   " + " · ".join(extra))
+
+        balance = credits(settings, fetch=fetch, force=force)
+        if balance:
+            realms = balance.get("realms") or {}
+            if realms:
+                lines.append("")
+            for realm, slot in sorted(realms.items(), key=lambda kv: -kv[1]["size"]):
+                size = slot.get("size") or 0
+                remain = slot.get("remain") or 0
+                if size <= 0:
+                    continue
+                label = REALM_CN.get(realm, realm)
+                pct = remain / size * 100
+                line = f"{label}积分 {remain:,.0f} / {size:,.0f}（剩 {pct:.0f}%）"
+                today = slot.get("today_credit")
+                if isinstance(today, (int, float)):
+                    line += f" · 今日 {today:,.0f}"
+                lines.append(line)
+        return "\n".join(lines)
+    except Exception:
+        return _fail(settings, "看板数据异常") if fetch else "看板数据异常"
 
 
 def models_detail(settings: dict[str, Any], fetch: bool = True, force: bool = False) -> str:

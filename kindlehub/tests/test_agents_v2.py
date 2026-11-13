@@ -415,3 +415,72 @@ def test_workbuddy_fail_cache_throttles_relogin(monkeypatch):
     assert t1 == t2
     settings = {"workbuddy": {"url": "http://board.example.com", "enabled": True}}
     assert "https" in workbuddy.current(settings, fetch=True)
+
+
+@pytest.mark.parametrize("data", [
+    [],                                                              # 顶层非 dict
+    "garbage",                                                       # 顶层是字符串
+    {"summary": {"window": {"requests": "abc"}}},                    # 次数非数值
+    {"summary": {"window": {"requests": 5, "total_tokens": "abc"}}},  # Token 非数值
+    {"summary": {"window": {"requests": 5, "total_tokens": 100, "cache_hit_pct": "x"}}},
+    {"summary": {"window": {"requests": 5, "errors": "abc"}}},
+])
+def test_workbuddy_current_survives_malformed(monkeypatch, data):
+    """网关返回畸形 JSON 时 current 只降级报错，绝不把异常抛进渲染链路。"""
+    from kindle_mcp_dashboard import workbuddy
+    workbuddy._payload.update({"key": None, "at": -1e9, "data": None, "err": "", "ttl": 0.0})
+    monkeypatch.setattr(workbuddy, "_load", lambda *a, **k: (data, ""))
+    settings = {"workbuddy": {"enabled": True, "url": "http://127.0.0.1:8788", "range": "today"}}
+    assert workbuddy.current(settings) == "看板数据异常"
+
+
+@pytest.mark.parametrize("data", [
+    "garbage",                                                       # 顶层非 dict
+    {"models": 5},                                                   # models 非可迭代
+    {"models": ["x"]},                                               # 列表项非 dict
+    {"models": [{"model": "m", "window": {"total_tokens": "abc"}}]},  # 排序键非数值
+    {"models": [{"model": "m", "window": {"total_tokens": 10, "requests": "abc"}}]},
+])
+def test_workbuddy_models_survives_malformed(monkeypatch, data):
+    """models 明细同样必须 fail-closed：畸形列表项/字符串 Token 不崩帧。"""
+    from kindle_mcp_dashboard import workbuddy
+    workbuddy._payload.update({"key": None, "at": -1e9, "data": None, "err": "", "ttl": 0.0})
+    monkeypatch.setattr(workbuddy, "_load", lambda *a, **k: (data, ""))
+    monkeypatch.setattr(workbuddy, "credits", lambda *a, **k: None)
+    settings = {"workbuddy": {"enabled": True, "url": "http://127.0.0.1:8788", "range": "today"}}
+    assert workbuddy.models(settings) == "看板数据异常"
+
+
+@pytest.mark.parametrize("payload", [
+    [],                          # 顶层非 dict
+    "garbage",                   # 顶层是字符串
+    {"accounts": 5},             # accounts 非可迭代
+    {"accounts": ["x"]},         # 账号项非 dict
+    {"accounts": [{"credits": "x"}]},  # credits 块非 dict
+])
+def test_workbuddy_credits_survives_malformed(monkeypatch, payload):
+    """积分汇总遇到畸形 /accounts 响应只返回 None，不崩帧也不编造余额。"""
+    from kindle_mcp_dashboard import workbuddy
+    workbuddy._credits_cache.update({"key": None, "at": -1e9, "data": None})
+    monkeypatch.setattr(workbuddy.secrets, "get", lambda *a, **k: "pw")
+    monkeypatch.setattr(workbuddy, "_login", lambda *a, **k: "tok")
+    monkeypatch.setattr(workbuddy, "_request", lambda *a, **k: payload)
+    settings = {"workbuddy": {"enabled": True, "url": "http://127.0.0.1:8788", "range": "today"}}
+    assert workbuddy.credits(settings) is None
+
+
+def test_workbuddy_happy_path_still_renders(monkeypatch):
+    """fail-closed 不能误伤正常数据：形状正确时摘要与明细照常渲染。"""
+    from kindle_mcp_dashboard import workbuddy
+    workbuddy._payload.update({"key": None, "at": -1e9, "data": None, "err": "", "ttl": 0.0})
+    good = {"summary": {"window": {"requests": 10, "errors": 1, "total_tokens": 2500,
+                                   "cache_hit_pct": 40, "cost_cny": 1.23}},
+            "models": [{"model": "gpt-x", "window": {"requests": 10, "total_tokens": 2500,
+                                                     "cost_cny": 1.23}}]}
+    monkeypatch.setattr(workbuddy, "_load", lambda *a, **k: (good, ""))
+    monkeypatch.setattr(workbuddy, "credits", lambda *a, **k: None)
+    settings = {"workbuddy": {"enabled": True, "url": "http://127.0.0.1:8788", "range": "today"}}
+    cur = workbuddy.current(settings)
+    assert "请求 10" in cur and "成功率 90%" in cur and "2.5K" in cur
+    mod = workbuddy.models(settings)
+    assert "gpt-x" in mod and "10 次" in mod
