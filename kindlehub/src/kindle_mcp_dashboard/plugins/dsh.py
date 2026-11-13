@@ -130,7 +130,9 @@ def state() -> AgentState:
         out.status, out.confidence = "idle", "medium"
         out.basis = "turn 无结束事件，但已停止写入（可能被中断）"
     elif last_type in {"turn/end", "step/end", "tool/result"}:
-        out.status = "idle" if age < STALE_WINDOW else "unknown"
+        # 已确证 turn 结束就是 idle，与距今多久无关；
+        # 只有"无边界事件"那一支才按时间降级 unknown（与 Codex 一致）
+        out.status = "idle"
         out.confidence = "high"
         out.basis = "收到 turn 结束事件"
     else:

@@ -131,6 +131,29 @@ def test_dsh_title_never_leaks_prompt_to_wall(tmp_path, monkeypatch):
     assert st.task is None, "标题（可能是 prompt）绝不能上墙"
 
 
+@needs_zstd
+def test_dsh_confirmed_turn_end_is_idle_even_when_stale(tmp_path, monkeypatch):
+    """确证 turn 结束就是 idle（high），不能因文件久未写入降级成 unknown，
+    否则与 high 置信自相矛盾（线上实测：2 小时前结束的会话被报 unknown）。"""
+    import os
+    root = tmp_path / "sessions"
+    sess = root / "demo" / "s1"
+    sess.mkdir(parents=True)
+    f = sess / "session.v4.jsonl.zstd"
+    _write_zst(f, [{"type": "turn/start"}, {"type": "turn/end"}])
+    old = time.time() - (agents.STALE_WINDOW + 7200)   # 远超 1 小时
+    os.utime(f, (old, old))
+
+    from kindle_mcp_dashboard.plugins import dsh
+    monkeypatch.setattr(dsh, "DSH_SESSIONS", root)
+    dsh._dsh_cache.update({"key": None, "value": None})
+
+    st = dsh.state()
+    assert st.status == "idle"
+    assert st.confidence == "high"
+    assert st.basis == "收到 turn 结束事件"
+
+
 def test_codex_finds_task_started_beyond_800_events(tmp_path, monkeypatch):
     """长 turn 把 task_started 挤出 800 条尾部窗口时，全量扫描仍要找到它。"""
     sessions = tmp_path / "sessions" / "2026" / "11" / "11"
