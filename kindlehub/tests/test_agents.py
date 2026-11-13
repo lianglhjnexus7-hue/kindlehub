@@ -135,7 +135,7 @@ def test_opencode_reads_session_without_touching_messages(tmp_path, monkeypatch)
     state = opencode.state()
     assert state.status == "running"
     assert state.project == "demo"
-    assert state.task == "修一下布局"
+    assert state.task is None  # 标题是对话派生内容，不上墙
 
 
 def test_opencode_reads_session_v2_message_activity(tmp_path, monkeypatch):
@@ -161,7 +161,7 @@ def test_opencode_reads_session_v2_message_activity(tmp_path, monkeypatch):
     state = opencode.state()
     assert state.status == "running"
     assert state.project == "demo"
-    assert state.task == "修一下布局"
+    assert state.task is None  # 标题是对话派生内容，不上墙
 
 
 def test_zcode_disconnects_when_rollout_and_db_missing(tmp_path, monkeypatch):
@@ -211,7 +211,7 @@ def test_zcode_running_when_rollout_fresh(tmp_path, monkeypatch):
     assert state.status == "running"
     assert state.confidence == "high"
     assert state.project == "demo"
-    assert state.task == "跑测试"
+    assert state.task is None  # 标题是对话派生内容，不上墙
 
 
 def test_zcode_idle_when_rollout_stale(tmp_path, monkeypatch):
@@ -225,8 +225,8 @@ def test_zcode_idle_when_rollout_stale(tmp_path, monkeypatch):
     assert "距最后写入" in state.basis
 
 
-def test_zcode_subagent_shows_parent_title(tmp_path, monkeypatch):
-    """子代理会话的标题是任务指令（近似 prompt），显示父会话的标题。"""
+def test_zcode_subagent_title_never_leaks(tmp_path, monkeypatch):
+    """子代理标题是任务指令（近似 prompt），父会话标题也是对话派生内容，都不上墙。"""
     from kindle_mcp_dashboard.plugins import zcode
     monkeypatch.setattr(
         zcode, "ROLLOUT_DIR",
@@ -235,7 +235,7 @@ def test_zcode_subagent_shows_parent_title(tmp_path, monkeypatch):
 
     state = zcode.state()
     assert state.status == "running"
-    assert state.task == "跑测试"
+    assert state.task is None  # 标题是对话派生内容，不上墙
 
 
 def test_zcode_never_shows_first_input_title(tmp_path, monkeypatch):

@@ -20,7 +20,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from ..agents import RUNNING_WINDOW, AgentState, _ago, _project_name, _short
+from ..agents import RUNNING_WINDOW, AgentState, _ago, _project_name
 from . import register
 
 OPENCODE_DB = Path.home() / ".local" / "share" / "opencode" / "opencode.db"
@@ -102,12 +102,11 @@ def state() -> AgentState:
         out.status = "unknown"
         return out
 
-    directory, title, stamp = row
+    directory, _title, stamp = row
     out.last_activity = stamp
     out.project = _project_name(directory) if directory else None
-    # "New session - 2026-10-15T07:09:34.596Z" 这类默认标题没有信息量
-    if title and not str(title).lower().startswith("new session"):
-        out.task = _short(str(title))
+    # 会话标题是用户首句或对话摘要，可能含隐私，不上墙（与 Claude/DSH 一致）
+    out.task = None
 
     age = time.time() - stamp
     if age < RUNNING_WINDOW:

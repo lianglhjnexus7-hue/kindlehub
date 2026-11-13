@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import sqlite3
 import subprocess
 import time
 
@@ -148,4 +149,76 @@ def test_codex_ignores_non_session_files(tmp_path, monkeypatch):
     assert st.last_activity is not None
     assert st.confidence == "low"        # 没被 .tmp 抢走
     assert st.status == "idle"
+
+
+# ---------------------------------------------------------------- 隐私：标题不上墙
+
+def test_opencode_title_never_leaks_to_wall(tmp_path, monkeypatch):
+    """OpenCode 会话标题是对话派生内容，绝不能进 task 上墙（与 DSH 同类）。"""
+    from kindle_mcp_dashboard.plugins import opencode
+    db = tmp_path / "opencode.db"
+    con = sqlite3.connect(db)
+    con.execute("create table session_v2 (id text, directory text, title text, time_updated int)")
+    con.execute("create table session_message (session_id text, time_updated int)")
+    now_ms = int(time.time() * 1000)
+    con.execute("insert into session_v2 values (?,?,?,?)",
+                ("s1", "/home/alice/Projects/secret-proj", "用户的私密首句 prompt", now_ms))
+    con.commit()
+    con.close()
+    monkeypatch.setattr(opencode, "OPENCODE_DB", db)
+    monkeypatch.setattr(opencode, "_db_cache", {"key": None, "row": None})
+    st = opencode.state()
+    assert st.task is None
+    assert st.project == "secret-proj"
+    assert "私密" not in agents.format_by_project([st.as_dict()])
+
+
+def test_zcode_generated_title_never_leaks_to_wall(tmp_path, monkeypatch):
+    """title_source=generated/custom 的标题也是对话派生内容，一律不上墙。"""
+    from kindle_mcp_dashboard.plugins import zcode
+    db = tmp_path / "db.sqlite"
+    con = sqlite3.connect(db)
+    con.execute("create table session (id text, directory text, title text,"
+                " title_source text, parent_id text, time_updated int)")
+    now_ms = int(time.time() * 1000)
+    con.execute("insert into session values (?,?,?,?,?,?)",
+                ("sess_1", "/home/alice/Projects/secret-proj",
+                 "模型生成的私密摘要", "generated", None, now_ms))
+    con.commit()
+    con.close()
+    rollout = tmp_path / "rollout"
+    rollout.mkdir()
+    (rollout / "model-io-sess_1.jsonl").write_text("{}\n", encoding="utf-8")
+    monkeypatch.setattr(zcode, "ZCODE_DB", db)
+    monkeypatch.setattr(zcode, "ROLLOUT_DIR", rollout)
+    st = zcode.state()
+    assert st.status == "running"        # rollout 刚写入
+    assert st.task is None
+    assert "私密" not in agents.format_by_project([st.as_dict()])
+
+
+def test_antigravity_scans_ide_variant(tmp_path, monkeypatch):
+    """antigravity-ide 等变体也要扫到，不能只认 antigravity/antigravity-cli。"""
+    from kindle_mcp_dashboard.plugins import antigravity
+    root = tmp_path / ".gemini" / "antigravity-ide"
+    (root / "conversations").mkdir(parents=True)
+    (root / "conversations" / "a.db").write_bytes(b"x")
+    monkeypatch.setattr(antigravity, "GEMINI_ROOT", tmp_path / ".gemini")
+    files = antigravity._candidate_files()
+    assert any("antigravity-ide" in str(f) for f in files)
+    st = antigravity.state()
+    assert st.status == "running"
+    assert st.task is None
+
+
+def test_tail_lines_boundary_does_not_drop_whole_line(tmp_path, monkeypatch):
+    """>8MB 退回尾部窗口时，seek 正好落在行首不能丢整行（off-by-one）。"""
+    path = tmp_path / "big.jsonl"
+    line_len = len('{"i": "0000"}\n')
+    lines = ['{"i": "%04d"}\n' % i for i in range(20)]
+    path.write_text("".join(lines), encoding="utf-8")
+    monkeypatch.setattr(agents, "FULL_READ_LIMIT", 10)   # 强制走尾部窗口分支
+    chunk = 5 * line_len                                  # start 正好是第 15 行行首
+    events = agents._tail_lines(path, limit=400, chunk=chunk)
+    assert [e["i"] for e in events] == ["%04d" % i for i in range(15, 20)]
 

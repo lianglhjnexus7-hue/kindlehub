@@ -223,8 +223,13 @@ def _draw_region(draw: ImageDraw.ImageDraw, region: dict[str, Any], values: dict
             row_y = cursor_y + index * line_h
             if row_y + line_h > y + h - pad:
                 break
-            text = item.get("text", item.get("label", "")) if isinstance(item, dict) else str(item)
-            status = item.get("status", "") if isinstance(item, dict) else ""
+            if isinstance(item, dict):
+                # text/label 可能是 null，status 可能是 list 等不可哈希值；
+                # 统一强制成 str，避免 draw.text(None) 与 set 成员判断崩溃
+                text = str(item.get("text") or item.get("label") or "")
+                status = str(item.get("status") or "")
+            else:
+                text, status = str(item), ""
             marker_y = row_y + max(2, line_h // 2 - 6)
             marker_box = (x + pad, marker_y, x + pad + 12, marker_y + 12)
             if status in {"ok", "online", "healthy", "running"}:
@@ -242,7 +247,9 @@ def _draw_image(image: Image.Image, region: dict[str, Any], width: int, height: 
         return
     try:
         source = Image.open(Path(path).expanduser()).convert("L")
-    except (OSError, ValueError):
+    except Exception:
+        # 图片解码失败模式很多（OSError/ValueError/DecompressionBombError 等），
+        # 坏素材只跳过这张图，绝不能拖垮整帧渲染
         return
     if region.get("trim"):
         bbox = ImageOps.invert(source).getbbox()

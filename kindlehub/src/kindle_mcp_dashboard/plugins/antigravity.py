@@ -24,8 +24,9 @@ _SKIP_PARTS = ("node_modules", "cache", "crashes", "log", "logs", "updater")
 
 def _candidate_files() -> list[Path]:
     out: list[Path] = []
-    for sub in ("antigravity", "antigravity-cli"):
-        root = GEMINI_ROOT / sub
+    # 产品有 antigravity / antigravity-cli / antigravity-ide 等多个变体，
+    # 按 antigravity* 全扫，避免漏掉正在使用的 IDE 版（与文档承诺一致）
+    for root in sorted(GEMINI_ROOT.glob("antigravity*")):
         if not root.is_dir():
             continue
         # os.walk 边遍历边剪枝：rglob("*") 会先把 node_modules 整棵走完

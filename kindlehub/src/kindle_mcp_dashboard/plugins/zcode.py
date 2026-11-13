@@ -10,7 +10,8 @@
 completed——2026-10 实机观察，正在运行的会话被报成 completed/idle。
 
 只读文件名与 mtime、session 表的元数据列；rollout 正文、searchable_text、
-消息 data 一律不读。
+消息 data 一律不读。会话标题（first_input/generated/custom）都是对话派生
+内容，可能含隐私，一律不上墙（task 恒为 None，与 Claude/DSH/OpenCode 一致）。
 """
 from __future__ import annotations
 
@@ -18,7 +19,7 @@ import sqlite3
 import time
 from pathlib import Path
 
-from ..agents import RUNNING_WINDOW, STALE_WINDOW, AgentState, _ago, _mtime, _project_name, _short
+from ..agents import RUNNING_WINDOW, STALE_WINDOW, AgentState, _ago, _mtime, _project_name
 from . import register
 
 ROLLOUT_DIR = Path.home() / ".zcode" / "cli" / "rollout"
@@ -50,26 +51,6 @@ def _sessions_meta() -> dict[str, dict]:
         return {}
     return {r[0]: {"directory": r[1], "title": r[2],
                    "title_source": r[3] or "", "parent_id": r[4]} for r in rows}
-
-
-def _display_title(sid: str, meta: dict[str, dict]) -> str | None:
-    """会话标题，供空闲行显示。
-
-    - 子代理会话的"标题"是下发的任务指令（近似 prompt），显示父会话的
-    - title_source=first_input 说明标题就是用户输入的第一句，不上墙
-    - "New session - ..." 这类默认标题没有信息量，不上墙
-    """
-    info = meta.get(sid) or {}
-    title, source = info.get("title"), info.get("title_source") or ""
-    if info.get("parent_id"):
-        parent = meta.get(str(info["parent_id"])) or {}
-        title, source = parent.get("title"), parent.get("title_source") or ""
-    text = str(title or "").strip()
-    if not text or source == "first_input":
-        return None
-    if text.lower().startswith("new session"):
-        return None
-    return _short(text)
 
 
 def state() -> AgentState:
@@ -119,7 +100,6 @@ def state() -> AgentState:
         info = meta.get(sid) or {}
         out.last_activity = stamp
         out.project = _project_name(str(info.get("directory")) if info.get("directory") else None)
-        out.task = _display_title(sid, meta)
         age = now - stamp
         if age < RUNNING_WINDOW:
             out.status = "running"
@@ -145,7 +125,6 @@ def state() -> AgentState:
             if label and label not in names:
                 names.append(label)
         out.project = "/".join(names) if names else None
-        out.task = _display_title(fresh[0][1], meta)
         return out
 
     # 全部安静：给出最近一次活动，medium 置信（mtime 证据确凿但不代表此刻状态）
@@ -154,7 +133,6 @@ def state() -> AgentState:
     info = meta.get(sid) or {}
     directory = info.get("directory")
     out.project = _project_name(str(directory)) if directory else None
-    out.task = _display_title(sid, meta)
     age = now - stamp
     if age < STALE_WINDOW:
         out.status = "idle"

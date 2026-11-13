@@ -308,3 +308,31 @@ def test_weather_valid_response_renders(monkeypatch):
                             "relative_humidity_2m": 70, "wind_speed_10m": 12}}
     monkeypatch.setattr(weather, "_get_json", good)
     assert weather.current({"city": "湛江"}, fetch=True) == "29℃ 少云\n湿度 70% · 风 12km/h"
+
+
+def test_list_null_text_and_unhashable_status_render():
+    """list 项 text/label 为 null、status 为 list 时不能崩溃毁掉整帧。"""
+    data = deepcopy(DEFAULT_DASHBOARD)
+    data["screens"][0]["regions"] = [
+        {"id": "l", "kind": "list", "x": 0, "y": 0, "w": 1000, "h": 600,
+         "items": [{"text": None}, {"label": None}, {"text": "hi", "status": ["ok"]}]}
+    ]
+    data = validate_dashboard(data)
+    assert render_png(data, fetch=False).startswith(b"\x89PNG")
+
+
+def test_image_decompression_bomb_is_skipped(monkeypatch):
+    """超大图片触发 DecompressionBombError 时只跳过该图，不拖垮整帧。"""
+    from PIL import Image
+    from kindle_mcp_dashboard import renderer
+
+    def boom(*args, **kwargs):
+        raise Image.DecompressionBombError("image too large")
+    monkeypatch.setattr(renderer.Image, "open", boom)
+    data = deepcopy(DEFAULT_DASHBOARD)
+    data["screens"][0]["regions"] = [
+        {"id": "img", "kind": "image", "x": 0, "y": 0, "w": 500, "h": 400,
+         "image": "/nonexistent/bomb.png"}
+    ]
+    data = validate_dashboard(data)
+    assert render_png(data, fetch=False).startswith(b"\x89PNG")

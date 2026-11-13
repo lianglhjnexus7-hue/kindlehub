@@ -155,8 +155,13 @@ def _tail_lines(path: Path, limit: int = 400, chunk: int = 8 * 1024 * 1024) -> l
         size = path.stat().st_size
         with open(path, "rb") as fh:
             if size > FULL_READ_LIMIT:
-                fh.seek(max(0, size - chunk))
-                fh.readline()  # 丢掉 seek 点处的半行
+                start = max(0, size - chunk)
+                fh.seek(start)
+                # start 正好落在行首时不能丢整行：仅当切入点在半行中间才丢弃残行
+                if start > 0:
+                    fh.seek(start - 1)
+                    if fh.read(1) != b"\n":
+                        fh.readline()
             for raw in fh:
                 raw = raw.strip()
                 if not raw:
