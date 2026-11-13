@@ -104,38 +104,38 @@ def current(settings: dict[str, Any], fetch: bool = True, force: bool = False) -
         _cache.update({"key": city, "at": now, "data": text, "ttl": TTL if ok else FAIL_TTL})
         return text
 
-    location = _geocode(city)
-    if not location:
-        return remember("未知", False)
-    lat, lon, _label = location
+    # 畸形外部响应一律降级为"未知"，守住"任何失败不崩溃、不编造"的模块契约
     try:
+        location = _geocode(city)
+        if not location:
+            return remember("未知", False)
+        lat, lon, _label = location
         payload = _get_json(FORECAST_URL, {
             "latitude": lat,
             "longitude": lon,
             "current": "temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m",
             "timezone": "auto",
         })
+        cur = payload.get("current") or {}
+        temp = cur.get("temperature_2m")
+        code = cur.get("weather_code")
+        humidity = cur.get("relative_humidity_2m")
+        wind = cur.get("wind_speed_10m")
+        if temp is None:
+            return remember("未知", False)
+
+        desc = WMO.get(int(code), "未知") if code is not None else "未知"
+        # 用全角 ℃ 而非 °C：Hiragino 的 ° 字形带额外字距，中间会裂开
+        line1 = f"{temp:.0f}℃ {desc}"
+        parts = []
+        if humidity is not None:
+            parts.append(f"湿度 {humidity:.0f}%")
+        if wind is not None:
+            parts.append(f"风 {wind:.0f}km/h")
+        line2 = " · ".join(parts) if parts else ""
+        return remember(f"{line1}\n{line2}" if line2 else line1, True)
     except Exception:
         return remember("未知", False)
-
-    cur = payload.get("current") or {}
-    temp = cur.get("temperature_2m")
-    code = cur.get("weather_code")
-    humidity = cur.get("relative_humidity_2m")
-    wind = cur.get("wind_speed_10m")
-    if temp is None:
-        return remember("未知", False)
-
-    desc = WMO.get(int(code), "未知") if code is not None else "未知"
-    # 用全角 ℃ 而非 °C：Hiragino 的 ° 字形带额外字距，中间会裂开
-    line1 = f"{temp:.0f}℃ {desc}"
-    parts = []
-    if humidity is not None:
-        parts.append(f"湿度 {humidity:.0f}%")
-    if wind is not None:
-        parts.append(f"风 {wind:.0f}km/h")
-    line2 = " · ".join(parts) if parts else ""
-    return remember(f"{line1}\n{line2}" if line2 else line1, True)
 
 
 def status() -> dict[str, Any]:

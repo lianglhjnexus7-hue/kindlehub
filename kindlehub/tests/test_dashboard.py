@@ -250,3 +250,61 @@ def test_list_items_null_renders():
     ]
     data = validate_dashboard(data)
     assert render_png(data, fetch=False).startswith(b"\x89PNG")
+
+
+def test_weather_malformed_response_degrades_to_unknown(monkeypatch):
+    """Open-Meteo 返回畸形数据时 current() 必须降级为"未知"，绝不崩溃。
+
+    守住模块契约「任何失败都返回未知、不编造天气」。覆盖三类畸形：
+    地理编码返回非 dict、weather_code 非数字、温度是字符串。
+    每例前重置缓存，否则上一例的 FAIL_TTL 缓存会让下一例直接短路。
+    """
+    from kindle_mcp_dashboard import weather
+
+    geo = {"results": [{"latitude": 21.2, "longitude": 110.3,
+                        "name": "湛江", "population": 1}]}
+
+    def reset():
+        monkeypatch.setattr(weather, "_cache",
+                            {"key": None, "at": -1e9, "data": None, "ttl": 0.0})
+        monkeypatch.setattr(weather, "_geo_cache", {})
+
+    reset()
+    monkeypatch.setattr(weather, "_get_json", lambda url, params: ["unexpected"])
+    assert weather.current({"city": "湛江"}, fetch=True) == "未知"
+
+    reset()
+
+    def bad_code(url, params):
+        if "geocoding" in url:
+            return geo
+        return {"current": {"temperature_2m": 20, "weather_code": "oops"}}
+    monkeypatch.setattr(weather, "_get_json", bad_code)
+    assert weather.current({"city": "湛江"}, fetch=True) == "未知"
+
+    reset()
+
+    def bad_temp(url, params):
+        if "geocoding" in url:
+            return geo
+        return {"current": {"temperature_2m": "warm", "weather_code": 0}}
+    monkeypatch.setattr(weather, "_get_json", bad_temp)
+    assert weather.current({"city": "湛江"}, fetch=True) == "未知"
+
+
+def test_weather_valid_response_renders(monkeypatch):
+    """正常响应仍要渲染出温度+天气/湿度+风两行，不能被防御逻辑误伤。"""
+    from kindle_mcp_dashboard import weather
+
+    monkeypatch.setattr(weather, "_cache",
+                        {"key": None, "at": -1e9, "data": None, "ttl": 0.0})
+    monkeypatch.setattr(weather, "_geo_cache", {})
+
+    def good(url, params):
+        if "geocoding" in url:
+            return {"results": [{"latitude": 21.2, "longitude": 110.3,
+                                 "name": "湛江", "population": 1}]}
+        return {"current": {"temperature_2m": 28.6, "weather_code": 1,
+                            "relative_humidity_2m": 70, "wind_speed_10m": 12}}
+    monkeypatch.setattr(weather, "_get_json", good)
+    assert weather.current({"city": "湛江"}, fetch=True) == "29℃ 少云\n湿度 70% · 风 12km/h"
