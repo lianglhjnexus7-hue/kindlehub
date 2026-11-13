@@ -185,6 +185,16 @@ def test_put_rejects_out_of_bounds_region(server):
     assert "canvas" in json.loads(body)["error"]
 
 
+def test_put_rejects_non_numeric_top_inset(server):
+    """top_inset 非数值曾让 canvas_height 抛 ValueError，PUT 只捕获 DashboardError
+    会丢连接；现在必须在边界返回 400。"""
+    bad = json.loads(json.dumps(DEFAULT_DASHBOARD))
+    bad["device"]["top_inset"] = "abc"
+    status, body = send(server, "/api/state", "PUT", bad)
+    assert status == 400
+    assert "top_inset" in json.loads(body)["error"]
+
+
 def test_put_saves_valid_state(server):
     good = json.loads(json.dumps(DEFAULT_DASHBOARD))
     good["refresh_seconds"] = 120

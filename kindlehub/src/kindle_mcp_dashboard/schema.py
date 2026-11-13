@@ -39,6 +39,11 @@ def validate_dashboard(value: dict[str, Any]) -> dict[str, Any]:
     for key in ("width", "height"):
         if not isinstance(device.get(key), int) or device[key] <= 0:
             raise DashboardError(f"device.{key} must be a positive integer")
+    # top_inset 会被 canvas_height 做 int()；非数值真值会抛 ValueError/TypeError，
+    # 而调用方只捕获 DashboardError，会直接丢连接。None 由 `or 0` 安全归零，放行。
+    inset = device.get("top_inset")
+    if inset is not None and (not isinstance(inset, (int, float)) or not math.isfinite(inset)):
+        raise DashboardError("device.top_inset must be a finite number")
     limit_h = canvas_height(device)
     settings = data.get("settings", {})
     if not isinstance(settings, dict):

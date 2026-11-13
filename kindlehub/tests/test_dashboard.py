@@ -363,6 +363,24 @@ def test_schema_accepts_numeric_font_size():
     validate_dashboard(data)
 
 
+@pytest.mark.parametrize("value", ["abc", [1], {"a": 1}, float("nan"), float("inf")])
+def test_schema_rejects_non_numeric_top_inset(value):
+    """device.top_inset 非数值会让 canvas_height 的 int() 抛 ValueError/TypeError，
+    而 PUT /api/state 与 POST /api/preview 只捕获 DashboardError → 丢连接。"""
+    data = deepcopy(DEFAULT_DASHBOARD)
+    data["device"]["top_inset"] = value
+    with pytest.raises(DashboardError):
+        validate_dashboard(data)
+
+
+def test_schema_accepts_null_and_zero_top_inset():
+    """null 由 `or 0` 安全归零，0 与正常像素值都必须放行，不能误伤。"""
+    for value in (None, 0, 40):
+        data = deepcopy(DEFAULT_DASHBOARD)
+        data["device"]["top_inset"] = value
+        validate_dashboard(data)
+
+
 def test_image_decompression_bomb_is_skipped(monkeypatch):
     """超大图片触发 DecompressionBombError 时只跳过该图，不拖垮整帧。"""
     from PIL import Image
