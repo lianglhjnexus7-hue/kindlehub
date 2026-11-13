@@ -444,12 +444,19 @@ def make_server(host: str = "0.0.0.0", port: int = 8787, refresh: int = 60,
                 self._json(HTTPStatus.BAD_REQUEST, {"error": "请求体为空或超过 1MiB"})
                 return None
             try:
-                return json.loads(self.rfile.read(length).decode("utf-8"))
+                data = json.loads(self.rfile.read(length).decode("utf-8"))
             except (UnicodeDecodeError, json.JSONDecodeError, RecursionError):
                 # 深层嵌套（1MiB 内可达数十万层）会让 json.loads 抛 RecursionError，
                 # 不捕获就会逃逸出 do_PUT/do_POST 直接丢连接
                 self._json(HTTPStatus.BAD_REQUEST, {"error": "请求体不是合法 JSON"})
                 return None
+            # 三个写接口都只收 JSON 对象：数组/标量会让 /api/secrets 的 .get 抛
+            # AttributeError；而 null 解析成功也返回 None，与"解析失败"撞车会静默丢连接。
+            # 统一在边界挡掉，None 从此只表示"已回 400"。
+            if not isinstance(data, dict):
+                self._json(HTTPStatus.BAD_REQUEST, {"error": "请求体必须是 JSON 对象"})
+                return None
+            return data
 
         def _send_file(self, name: str, ctype: str) -> None:
             target = STATIC_DIR / name

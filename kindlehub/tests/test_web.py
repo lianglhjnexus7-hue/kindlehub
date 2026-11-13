@@ -218,6 +218,18 @@ def test_secrets_rejects_unknown_key(server):
     assert status == 400
 
 
+@pytest.mark.parametrize("body", [b"null", b"[]", b"5", b'"x"', b"true"])
+def test_write_endpoints_reject_non_object_json(server, body):
+    """null/数组/标量都不是 JSON 对象。null 解析成功返回 None，曾与"解析失败"
+    撞车让三个写接口静默丢连接；数组/标量曾让 /api/secrets 的 .get 抛 AttributeError。
+    现在都必须在边界回 400（send 遇丢连接会抛 URLError，断言 400 即验证不丢）。"""
+    for path, method in [("/api/state", "PUT"), ("/api/preview", "POST"),
+                         ("/api/secrets", "POST")]:
+        status, resp = send(server, path, method, body)
+        assert status == 400, f"{method} {path} body={body!r} -> {status}"
+        assert "error" in json.loads(resp)
+
+
 def test_preview_returns_png_for_draft(server):
     draft = json.loads(json.dumps(DEFAULT_DASHBOARD))
     status, body = send(server, "/api/preview", "POST", draft)
