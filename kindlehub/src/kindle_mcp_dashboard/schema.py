@@ -97,7 +97,10 @@ def validate_dashboard(value: dict[str, Any]) -> dict[str, Any]:
                     number = region[key]
                     if not isinstance(number, (int, float)) or not math.isfinite(number):
                         raise DashboardError(f"region {rid}.{key} must be a finite number")
-    if data.get("active_screen") not in screen_ids:
+    # 先确认是字符串再做集合成员判断：list/dict 等不可哈希值会让 `in set`
+    # 抛 TypeError 而非 DashboardError，调用方只捕获后者，会直接丢连接。
+    active = data.get("active_screen")
+    if not isinstance(active, str) or active not in screen_ids:
         raise DashboardError("active_screen must name an existing screen")
     return data
 

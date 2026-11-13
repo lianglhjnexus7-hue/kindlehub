@@ -381,6 +381,16 @@ def test_schema_accepts_null_and_zero_top_inset():
         validate_dashboard(data)
 
 
+@pytest.mark.parametrize("value", [[], {}, ["home"], None, 5])
+def test_schema_rejects_non_string_active_screen(value):
+    """active_screen 为不可哈希值时 `in screen_ids`（set）抛 TypeError 而非
+    DashboardError，PUT/preview 只捕获后者会丢连接。必须先校验字符串。"""
+    data = deepcopy(DEFAULT_DASHBOARD)
+    data["active_screen"] = value
+    with pytest.raises(DashboardError):
+        validate_dashboard(data)
+
+
 def test_image_decompression_bomb_is_skipped(monkeypatch):
     """超大图片触发 DecompressionBombError 时只跳过该图，不拖垮整帧。"""
     from PIL import Image
