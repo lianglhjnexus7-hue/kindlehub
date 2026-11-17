@@ -28,7 +28,8 @@ from pathlib import Path
 from typing import Any
 
 STATUS_ORDER = ["waiting", "running", "error", "idle", "unknown", "disconnected"]
-ACTIVE = {"running", "waiting", "error"}
+ACTIVE = {"running"}
+ATTENTION = {"waiting", "error"}
 
 # 超过这个时间没有任何新事件，就不再说"正在执行"
 RUNNING_WINDOW = 120.0
@@ -298,14 +299,20 @@ def format_by_project(rows: list[dict[str, Any]],
 
     def sort_key(item):
         _name, members = item
-        has_active = any(m["status"] in ACTIVE for m in members)
+        if any(m["status"] in ACTIVE for m in members):
+            rank = 0
+        elif any(m["status"] in ATTENTION for m in members):
+            rank = 1
+        else:
+            rank = 2
         newest = max((m.get("last_activity") or 0) for m in members)
-        return (0 if has_active else 1, -newest)
+        return (rank, -newest)
 
     lines: list[str] = []
     for project, members in sorted(groups.items(), key=sort_key)[:max_projects]:
         active = [m for m in members if m["status"] in ACTIVE]
-        idle = [m for m in members if m["status"] not in ACTIVE]
+        attention = [m for m in members if m["status"] in ATTENTION]
+        idle = [m for m in members if m["status"] not in ACTIVE | ATTENTION]
 
         if active:
             names = "、".join(str(m["agent"]) for m in active)
@@ -323,12 +330,23 @@ def format_by_project(rows: list[dict[str, Any]],
                     if task:
                         detail += " · " + str(task)
                     lines.append(detail)
-        else:
+        if attention:
+            for m in attention:
+                state_cn = STATUS_CN.get(m["status"], m["status"])
+                lines.append("● " + project + " · " + str(m["agent"]) + " · " + state_cn)
+        if not active and not attention:
+            idle_only = [m for m in idle if m["status"] == "idle"]
             newest = max(members, key=lambda x: x.get("last_activity") or 0)
             age = newest.get("last_activity")
             when = " · " + _ago(time.time() - age) if age else ""
-            names = "、".join(str(m["agent"]) for m in idle)
-            lines.append("○ " + project + " · " + names + " · 空闲" + when)
+            if idle_only:
+                names = "、".join(str(m["agent"]) for m in idle_only)
+                lines.append("○ " + project + " · " + names + " · 空闲" + when)
+            for m in idle:
+                if m["status"] != "idle":
+                    mark = STATUS_MARK.get(m["status"], "○")
+                    state_cn = STATUS_CN.get(m["status"], m["status"])
+                    lines.append(mark + " " + project + " · " + str(m["agent"]) + " · " + state_cn)
 
     return "\n".join(lines) if lines else "未发现项目"
 

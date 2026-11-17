@@ -11,7 +11,15 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+import threading
 from pathlib import Path
+
+
+class SecretsCorrupt(RuntimeError):
+    pass
+
+
+_LOCK = threading.RLock()
 
 
 def path() -> Path:
@@ -29,37 +37,44 @@ def load() -> dict:
         return {}
     try:
         data = json.loads(target.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {}
-    return data if isinstance(data, dict) else {}
+    except (OSError, json.JSONDecodeError) as exc:
+        raise SecretsCorrupt(f"密钥文件不可读或非法 JSON: {target}") from exc
+    if not isinstance(data, dict):
+        raise SecretsCorrupt(f"密钥文件不是 JSON 对象: {target}")
+    return data
 
 
 def save(data: dict) -> Path:
-    target = path()
-    target.parent.mkdir(parents=True, exist_ok=True)
-    fd, name = tempfile.mkstemp(prefix="secrets-", suffix=".json", dir=target.parent)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            json.dump(data, handle, ensure_ascii=False, indent=2)
-            handle.write("\n")
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.chmod(name, 0o600)
-        os.replace(name, target)
-    finally:
-        if os.path.exists(name):
-            os.unlink(name)
-    return target
+    with _LOCK:
+        target = path()
+        target.parent.mkdir(parents=True, exist_ok=True)
+        fd, name = tempfile.mkstemp(prefix="secrets-", suffix=".json", dir=target.parent)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                json.dump(data, handle, ensure_ascii=False, indent=2)
+                handle.write("\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.chmod(name, 0o600)
+            os.replace(name, target)
+        finally:
+            if os.path.exists(name):
+                os.unlink(name)
+        return target
 
 
 def get(key: str, default=None):
-    return load().get(key, default)
+    try:
+        return load().get(key, default)
+    except SecretsCorrupt:
+        return default
 
 
 def put(key: str, value) -> Path:
-    data = load()
-    if value in (None, ""):
-        data.pop(key, None)
-    else:
-        data[key] = value
-    return save(data)
+    with _LOCK:
+        data = load()
+        if value in (None, ""):
+            data.pop(key, None)
+        else:
+            data[key] = value
+        return save(data)

@@ -15,16 +15,19 @@ from .schema import DashboardError, validate_dashboard
 def project_root() -> Path:
     """仓库根目录。
 
-    优先按本文件位置向上找（editable install 与源码运行都适用）。
-    找不到 .git 时退回相对层数推算（非 editable 安装时装在 site-packages，
-    此时项目根已不可知，退到当前工作目录）。
+    优先按本文件位置向上找（最多 6 层，editable install 与源码运行都适用）：
+    kindlehub/pyproject.toml 存在，或 .git 存在且同目录下有 kindlehub/，才认定为本项目。
+    找不到时退回相对层数推算（parents[3]），若推算目录里没有 kindlehub/，
+    则退到当前工作目录（非 editable 安装时装在 site-packages，此时项目根已不可知）。
     """
     here = Path(__file__).resolve()
-    for parent in here.parents:
-        if (parent / ".git").exists() or (parent / "kindlehub" / "pyproject.toml").exists():
+    for parent in list(here.parents)[:6]:
+        if (parent / "kindlehub" / "pyproject.toml").exists():
+            return parent
+        if (parent / ".git").exists() and (parent / "kindlehub").is_dir():
             return parent
     # 源码布局：<root>/kindlehub/src/kindle_mcp_dashboard/store.py
-    if len(here.parents) > 3:
+    if len(here.parents) > 3 and (here.parents[3] / "kindlehub").is_dir():
         return here.parents[3]
     return Path.cwd()
 

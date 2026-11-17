@@ -45,6 +45,31 @@ def _safe_base(base: str) -> bool:
     return False
 
 
+class _TokenSafeRedirect(urllib.request.HTTPRedirectHandler):
+    """跨源重定向时丢弃 X-Panel-Token，避免令牌随 3xx 落到别的主机。"""
+
+    @staticmethod
+    def _origin(url: str) -> tuple[str, str, int | None]:
+        parts = urllib.parse.urlsplit(url)
+        port = parts.port
+        if port is None:
+            port = {"http": 80, "https": 443}.get(parts.scheme)
+        return parts.scheme, (parts.hostname or "").lower(), port
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        new = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if new is None:
+            return None
+        if self._origin(req.full_url) != self._origin(new.full_url):
+            for store in (new.headers, new.unredirected_hdrs):
+                for key in [k for k in store if k.lower() == "x-panel-token"]:
+                    del store[key]
+        return new
+
+
+_opener = urllib.request.build_opener(_TokenSafeRedirect)
+
+
 def _request(url: str, payload: dict | None = None, token: str | None = None) -> Any:
     data = json.dumps(payload).encode() if payload is not None else None
     headers = {"User-Agent": "KindleHub/0.2"}
@@ -53,7 +78,7 @@ def _request(url: str, payload: dict | None = None, token: str | None = None) ->
     if token:
         headers["X-Panel-Token"] = token
     request = urllib.request.Request(url, data=data, headers=headers)
-    with urllib.request.urlopen(request, timeout=TIMEOUT) as response:
+    with _opener.open(request, timeout=TIMEOUT) as response:
         return json.loads(response.read().decode("utf-8"))
 
 
@@ -104,16 +129,17 @@ def credits(settings: dict[str, Any], fetch: bool = True, force: bool = False) -
     config = settings.get("workbuddy") or {}
     base = str(config.get("url") or DEFAULT_URL)
     span = str(config.get("range") or DEFAULT_RANGE)
+    key = f"{base}|{span}"
     now = time.monotonic()
     if not _safe_base(base):
         return None
     # force=True 只跳过"未过期就复用"，不跳过"过期后先用旧数据"——
     # 预热循环每 60 秒强制跑一次，若这里也直连，等于把 TTL 击穿成 60 秒。
-    if (_credits_cache["key"] == base and _credits_cache["data"] is not None
+    if (_credits_cache["key"] == key and _credits_cache["data"] is not None
             and now - _credits_cache["at"] < TTL):
         return _credits_cache["data"]
     if not fetch:
-        return _credits_cache["data"] if _credits_cache["key"] == base else None
+        return _credits_cache["data"] if _credits_cache["key"] == key else None
 
     password = secrets.get("workbuddy_password")
     if not password:
@@ -124,7 +150,7 @@ def credits(settings: dict[str, Any], fetch: bool = True, force: bool = False) -
     try:
         payload = _request(f"{base.rstrip('/')}/accounts?realm=all", token=token)
     except Exception:
-        return _credits_cache["data"] if _credits_cache["key"] == base else None
+        return _credits_cache["data"] if _credits_cache["key"] == key else None
 
     # 国际版与国内版是两套账号池，积分不能混算。
     # 畸形响应（payload 非 dict、accounts 非列表、account 非 dict）只返回 None，
@@ -160,7 +186,7 @@ def credits(settings: dict[str, Any], fetch: bool = True, force: bool = False) -
                 by_realm[realm]["today_cost"] = None
 
         result = {"realms": by_realm}
-        _credits_cache.update({"key": base, "at": now, "data": result})
+        _credits_cache.update({"key": key, "at": now, "data": result})
         return result
     except Exception:
         return None
@@ -189,18 +215,20 @@ def _load(settings: dict[str, Any], fetch: bool, force: bool) -> tuple[dict | No
     now = time.monotonic()
     # 与 credits 同理：force 只跳过"未过期就复用"，TTL 内的缓存照样命中，
     # 预热循环的 force=True 不会把 analytics 请求放大成每 60 秒一次。
-    if (_payload["key"] == key and now - _payload["at"] < _payload["ttl"]
+    if (_payload["key"] == key and now - _payload.get("checked_at", _payload["at"]) < _payload["ttl"]
             and (_payload["data"] is not None or _payload["err"])):
         return _payload["data"], _payload["err"]
     if not fetch:
-        return _payload["data"] if _payload["key"] == key else None, ""
+        return (_payload["data"], _payload["err"]) if _payload["key"] == key else (None, "")
 
     def stale() -> tuple[dict | None, str]:
         """已有旧数据时优先返回它，只推迟重试。
         否则看板一次重启就会把整块明细刷成"看板未连接"。"""
         if _payload["data"] is not None and _payload["key"] == key:
-            _payload.update({"at": now, "err": "", "ttl": FAIL_TTL})
-            return _payload["data"], ""
+            age = max(1, int((time.monotonic() - _payload["at"]) // 60))
+            err = f"看板暂时不可达，显示 {age} 分钟前的数据"
+            _payload.update({"checked_at": now, "err": err, "ttl": FAIL_TTL})
+            return _payload["data"], err
         return None, "看板未连接"
 
     password = secrets.get("workbuddy_password")
@@ -226,7 +254,7 @@ def _load(settings: dict[str, Any], fetch: bool, force: bool) -> tuple[dict | No
     except Exception:
         return stale()
 
-    _payload.update({"key": key, "at": now, "data": data, "err": "", "ttl": TTL})
+    _payload.update({"key": key, "at": now, "checked_at": now, "data": data, "err": "", "ttl": TTL})
     return data, ""
 
 
@@ -237,10 +265,13 @@ def _fail(settings: dict[str, Any], text: str) -> str:
     span = str(config.get("range") or DEFAULT_RANGE)
     key = f"{base}|{span}"
     now = time.monotonic()
+    if (_payload["key"] == key and _payload["data"] is not None
+            and _payload["err"] == text):
+        return text
     # 已在失败缓存窗口内就不重置时间戳：否则每轮渲染都续期，FAIL_TTL 永不到期、永不重试。
     if not (_payload["key"] == key and _payload["data"] is None
             and _payload["err"] and now - _payload["at"] < _payload["ttl"]):
-        _payload.update({"key": key, "at": now, "data": None, "err": text, "ttl": FAIL_TTL})
+        _payload.update({"key": key, "at": now, "checked_at": now, "data": None, "err": text, "ttl": FAIL_TTL})
     return text
 
 
@@ -261,7 +292,9 @@ def current(settings: dict[str, Any], fetch: bool = True, force: bool = False) -
         window = (data.get("summary") or {}).get("window") or {}
         requests = int(window.get("requests") or 0)
         if not requests:
-            return "今日暂无请求"
+            span = str(config.get("range") or DEFAULT_RANGE)
+            period = RANGE_CN.get(span, span)
+            return f"{period}暂无请求"
         errors = int(window.get("errors") or 0)
         success = (1 - errors / requests) * 100
         tokens = window.get("total_tokens") or 0
@@ -311,7 +344,9 @@ def models(settings: dict[str, Any], fetch: bool = True, force: bool = False,
         # 继续比较会抛 TypeError
         rows.sort(key=lambda r: -r[0])
         if not rows:
-            return "今日暂无模型消耗"
+            span = str(config.get("range") or DEFAULT_RANGE)
+            period = RANGE_CN.get(span, span)
+            return f"{period}暂无模型消耗"
 
         span = str((settings.get("workbuddy") or {}).get("range") or DEFAULT_RANGE)
         period = RANGE_CN.get(span, span)
@@ -371,7 +406,7 @@ def models(settings: dict[str, Any], fetch: bool = True, force: bool = False,
                 line = f"{label}积分 {remain:,.0f} / {size:,.0f}（剩 {pct:.0f}%）"
                 today = slot.get("today_credit")
                 if isinstance(today, (int, float)):
-                    line += f" · 今日 {today:,.0f}"
+                    line += f" · {'今日' if span == 'today' else RANGE_CN.get(span, span)} {today:,.0f}"
                 lines.append(line)
         return "\n".join(lines)
     except Exception:

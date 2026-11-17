@@ -47,6 +47,7 @@ _PIXEL_GIF = (b"GIF89a\x01\x00\x01\x00\x80\x00\x00\x00\x00\x00"
               b"\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02D\x01\x00;")
 # Kindle 最后一次拉图的时间，用于判断设备是否还在线
 _last_seen: dict[str, float | str | None] = {"at": None, "ip": None}
+_last_visitor: dict[str, float | str | None] = {"at": None, "ip": None}
 STATIC_DIR = Path(__file__).parent / "static"
 STATIC_FILES = {"admin.js", "admin.css"}
 MAX_BODY = 1 << 20  # 1 MiB
@@ -205,13 +206,21 @@ def make_server(host: str = "0.0.0.0", port: int = 8787, refresh: int = 60,
                 return
             if path in {"/", "/kindle"}:
                 if self.client_address[0] not in LOOPBACK:
-                    _last_seen.update({"at": time.time(), "ip": self.client_address[0]})
+                    _ua = (self.headers.get("User-Agent") or "")
+                    if "kindle" in _ua.lower():
+                        _last_seen.update({"at": time.time(), "ip": self.client_address[0]})
+                    else:
+                        _last_visitor.update({"at": time.time(), "ip": self.client_address[0]})
                 state = store.read()
                 body = _page(state.get("refresh_seconds", refresh), state["device"]).encode()
                 self._send(HTTPStatus.OK, "text/html; charset=utf-8", body)
             elif path == "/screen.png":
                 if self.client_address[0] not in LOOPBACK:
-                    _last_seen.update({"at": time.time(), "ip": self.client_address[0]})
+                    _ua = (self.headers.get("User-Agent") or "")
+                    if "kindle" in _ua.lower():
+                        _last_seen.update({"at": time.time(), "ip": self.client_address[0]})
+                    else:
+                        _last_visitor.update({"at": time.time(), "ip": self.client_address[0]})
                 # Kindle 端通过 batt/chg 传电量，用于自绘状态栏
                 q = urllib.parse.parse_qs(urlparse(self.path).query)
                 extra = {}
@@ -355,6 +364,9 @@ def make_server(host: str = "0.0.0.0", port: int = 8787, refresh: int = 60,
             except DashboardError as exc:
                 self._json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
                 return
+            except OSError as exc:
+                self._json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "保存失败：" + str(exc)})
+                return
             self._json(HTTPStatus.OK, {"saved": True, "screens": len(checked["screens"])})
 
         def do_POST(self) -> None:  # noqa: N802
@@ -371,7 +383,14 @@ def make_server(host: str = "0.0.0.0", port: int = 8787, refresh: int = 60,
                 if key != "workbuddy_password":
                     self._json(HTTPStatus.BAD_REQUEST, {"error": "不支持的密钥名"})
                     return
-                secrets.put(key, str(payload.get("value") or "").strip() or None)
+                try:
+                    secrets.put(key, str(payload.get("value") or "").strip() or None)
+                except secrets.SecretsCorrupt:
+                    self._json(HTTPStatus.CONFLICT, {"error": "密钥文件已损坏，请先修复或删除 " + str(secrets.path())})
+                    return
+                except OSError as exc:
+                    self._json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "保存失败：" + str(exc)})
+                    return
                 self._json(HTTPStatus.OK, {"saved": True})
                 return
             if route != "/api/preview":
@@ -446,14 +465,36 @@ def make_server(host: str = "0.0.0.0", port: int = 8787, refresh: int = 60,
                     host = None
                 if host in {"localhost", "127.0.0.1", "::1"}:
                     return True
+            self._drain_body()
             self._send(HTTPStatus.FORBIDDEN, "text/plain; charset=utf-8",
                        "管理后台仅允许本机访问\n".encode())
             return False
+
+        def _drain_body(self) -> None:
+            """读 body 之前就回 4xx 时，把剩余请求体排掉，
+            避免残留字节被 HTTP/1.1 长连接当成下一个请求解析。"""
+            try:
+                length = int(self.headers.get("Content-Length", "0"))
+            except ValueError:
+                length = 0
+            if length <= 0:
+                self.close_connection = True
+                return
+            remaining = min(length, MAX_BODY)
+            while remaining > 0:
+                chunk = self.rfile.read(min(remaining, 65536))
+                if not chunk:
+                    self.close_connection = True
+                    return
+                remaining -= len(chunk)
+            if length > MAX_BODY:
+                self.close_connection = True
 
         def _read_json(self):
             # 跨站表单只能发 urlencoded/text/plain，强制 JSON 类型挡住 CSRF
             ctype = (self.headers.get("Content-Type") or "").split(";")[0].strip().lower()
             if ctype != "application/json":
+                self._drain_body()
                 self._json(HTTPStatus.BAD_REQUEST, {"error": "Content-Type 必须是 application/json"})
                 return None
             try:
@@ -461,6 +502,7 @@ def make_server(host: str = "0.0.0.0", port: int = 8787, refresh: int = 60,
             except ValueError:
                 length = 0
             if length <= 0 or length > MAX_BODY:
+                self._drain_body()
                 self._json(HTTPStatus.BAD_REQUEST, {"error": "请求体为空或超过 1MiB"})
                 return None
             try:
@@ -519,6 +561,10 @@ def _page(refresh: int, device: dict) -> str:
     """生成显示页。
 
     JS 关闭时（Kindle 实验浏览器默认）靠 meta refresh 整页重载，这是基线路径。
+    **meta refresh 放在 <noscript> 里**：JS 能跑时 noscript 的内容不会被解析进 DOM，
+    刷新定时器从一开始就不会被排上，两种机制不可能叠加。
+    （早期写法是「JS 把 meta 节点删掉」——移除节点并不能取消已排好的定时器，
+      于是整页刷新照旧发生，局部刷新省下的残影收益被抵消。）
     JS 可用时升级为「局部刷新」：只替换 img.src，边框与标题不重绘，
     显著减轻 e-ink 残影；同时监听窗口聚焦，锁屏唤醒后立刻拉新图。
 
@@ -537,7 +583,6 @@ def _page(refresh: int, device: dict) -> str:
         return "/screen.png?cache=0&bar=0&_=" + seq + "&" + (new Date()).getTime();
       }
       function load() {
-        broken = 0;
         img.src = stamp();
       }
       function schedule() {
@@ -554,17 +599,14 @@ def _page(refresh: int, device: dict) -> str:
           window.setTimeout(function () { window.location.reload(); }, 5000);
         }
       };
-      img.onload = schedule;
-      // 局部刷新接管后必须停掉整页 meta refresh，否则两种机制叠加，
-      // 既浪费带宽又让边框反复重绘，残影反而更重。
-      try {
-        var metas = document.getElementsByTagName("meta");
-        for (var i = 0; i < metas.length; i++) {
-          if (metas[i].httpEquiv && String(metas[i].httpEquiv).toLowerCase() === "refresh") {
-            metas[i].parentNode.removeChild(metas[i]);
-          }
-        }
-      } catch (e) {}
+      img.onload = function () {
+        broken = 0;
+        schedule();
+      };
+      // 整页 meta refresh 已经放在 <noscript> 里：JS 能跑时它根本不会进入 DOM，
+      // 所以这里不需要（也不应该）再去做「删除 meta 节点」这件事——
+      // 移除节点并不能取消已经排好的刷新定时器，反而给人「已经关掉了」的错觉。
+      // 见 _page() 模板注释。
       if (typeof window.attachEvent === "function") {
         window.attachEvent("onfocus", load);
       } else if (typeof window.addEventListener === "function") {
@@ -586,7 +628,7 @@ def _page(refresh: int, device: dict) -> str:
     """.replace("SECONDS", str(seconds))
     return f"""<!doctype html>
 <html><head><meta charset="utf-8">
-<meta http-equiv="refresh" content="{seconds}">
+<noscript><meta http-equiv="refresh" content="{seconds}"></noscript>
 <title>KindleHub</title>
 <style>html,body{{margin:0;padding:0;background:#fff;overflow:hidden}}
 img{{display:block;max-width:100%;height:auto}}</style>
