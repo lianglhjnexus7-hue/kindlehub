@@ -10,8 +10,8 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        # 3.11 = pyproject 声明的最低版本；3.14 = 维护者实际运行环境
-        python-version: ["3.11", "3.14"]
+        # 本机已收敛到 3.14（uv 管理），CI 与实际运行环境一致
+        python-version: ["3.14"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
