@@ -199,13 +199,18 @@ def test_put_rejects_deeply_nested_json(server):
 def test_put_rejects_deeply_nested_config(server):
     """json.loads 能解析的深层嵌套（2000 层 dict，仅约 14KB），validate 的
     deepcopy 仍会抛 RecursionError；不转译成 DashboardError 就会丢连接。
-    用原始字节拼接构造，避免测试自身 json.dumps 触顶。"""
+    用原始字节拼接构造，避免测试自身 json.dumps 触顶。
+
+    注：嵌套边界落在 C 实现版本差异上——3.11 的 json.loads 在 2000 层就抛
+    RecursionError（走"不是合法 JSON"分支），3.12+/3.14 能解析、由 validate 的
+    deepcopy 抛出（走"nested too deeply"分支）。两条路径都必须 400。"""
     depth = 2000
     junk = b'{"n":' * depth + b'{"leaf":1}' + b"}" * depth
     payload = json.dumps(DEFAULT_DASHBOARD)[:-1].encode() + b',"junk":' + junk + b"}"
     status, body = send(server, "/api/state", "PUT", payload)
     assert status == 400
-    assert "nested" in json.loads(body)["error"]
+    error = json.loads(body)["error"]
+    assert "nested" in error or "JSON" in error
 
 
 def test_preview_rejects_oversized_device(server):
