@@ -78,7 +78,7 @@ def test_claude_code_reads_only_cwd(tmp_path, monkeypatch):
     root = tmp_path / ".claude" / "projects" / "demo"
     root.mkdir(parents=True)
     (root / "s.jsonl").write_text(
-        json.dumps({"type": "user", "cwd": "/home/alice/Projects/demo",
+        json.dumps({"type": "user", "cwd": "<HOME>/alice/Projects/demo",
                     "message": {"content": "这段对话正文绝不能上墙"}}) + "\n",
         encoding="utf-8",
     )
@@ -162,7 +162,7 @@ def test_opencode_title_never_leaks_to_wall(tmp_path, monkeypatch):
     con.execute("create table session_message (session_id text, time_updated int)")
     now_ms = int(time.time() * 1000)
     con.execute("insert into session_v2 values (?,?,?,?)",
-                ("s1", "/home/alice/Projects/secret-proj", "用户的私密首句 prompt", now_ms))
+                ("s1", "<HOME>/alice/Projects/secret-proj", "用户的私密首句 prompt", now_ms))
     con.commit()
     con.close()
     monkeypatch.setattr(opencode, "OPENCODE_DB", db)
@@ -182,7 +182,7 @@ def test_zcode_generated_title_never_leaks_to_wall(tmp_path, monkeypatch):
                 " title_source text, parent_id text, time_updated int)")
     now_ms = int(time.time() * 1000)
     con.execute("insert into session values (?,?,?,?,?,?)",
-                ("sess_1", "/home/alice/Projects/secret-proj",
+                ("sess_1", "<HOME>/alice/Projects/secret-proj",
                  "模型生成的私密摘要", "generated", None, now_ms))
     con.commit()
     con.close()
