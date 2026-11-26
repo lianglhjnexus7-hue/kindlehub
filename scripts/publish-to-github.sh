@@ -49,13 +49,16 @@ echo "==> 3) 隐私扫描（命中即中止）"
 # 个人邮箱/真实网段等模式放在未跟踪的 .state/scan-patterns（每行一个 ERE）。
 # 本脚本会被导出到公开仓库，所以绝不在这里写个人数据的字面量。
 BAD=0
+# 仅排除 .git、publish-to-github.sh 自身以及保留的 kindlehub/kindle 参考脚本（含文档占位 IP，与 CI 一致）
 scan() {
     local label="$1" pattern="$2" hits
     # -print0/-0：文件名含空格（如 "KindleHub 停止.sh"）也不能漏扫
-    hits=$(find . -path ./.git -prune -o -type f \
+    hits=$(find . \( -path ./.git -o -path ./kindlehub/kindle \) -prune -o -type f \
         \( -name "*.py" -o -name "*.sh" -o -name "*.conf" -o -name "*.json" \
            -o -name "*.toml" -o -name "*.yml" -o -name "*.yaml" \
-           -o -name "*.example" -o -name "*.plist" \) \
+           -o -name "*.example" -o -name "*.plist" -o -name "*.md" \
+           -o -name "*.html" -o -name "*.js" -o -name "*.css" \
+           -o -name "*.txt" -o -name "*.template" \) \
         ! -path "./scripts/publish-to-github.sh" -print0 2>/dev/null \
         | xargs -0 grep -lE "$pattern" /dev/null 2>/dev/null | head -5 || true)
     if [ -n "$hits" ]; then
@@ -64,8 +67,23 @@ scan() {
         echo "    OK $label"
     fi
 }
-scan "绝对路径" "/Users/[a-z]"
+scan "绝对路径" "/Users/[a-z]|/home/[a-z]"
 scan "token"    "ghp_|sk-[A-Za-z0-9]{20}"
+
+IP_PAT='\b(10\.[0-9]+\.[0-9]+\.[0-9]+|192\.168\.[0-9]+\.[0-9]+|172\.(1[6-9]|2[0-9]|3[01])\.[0-9]+\.[0-9]+)\b'
+ip_hits=""
+while IFS= read -r -d '' f; do
+    if sed -E 's/192\.168\.(15|244)\.[0-9]+//g; s/192\.168\.1\.100//g' "$f" \
+       | grep -qE "$IP_PAT"; then
+        ip_hits="${ip_hits}${f}"$'\n'
+    fi
+done < <(find . \( -path ./.git -o -path ./kindlehub/kindle \) -prune -o -type f \
+    ! -path "./scripts/publish-to-github.sh" -print0 2>/dev/null)
+if [ -n "$ip_hits" ]; then
+    echo "    !! 局域网 IP:"; printf "%s" "$ip_hits" | head -5; BAD=1
+else
+    echo "    OK 局域网 IP"
+fi
 PATTERNS="$ROOT/.state/scan-patterns"
 if [ -f "$PATTERNS" ]; then
     while IFS= read -r pat || [ -n "$pat" ]; do

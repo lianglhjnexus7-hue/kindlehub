@@ -474,6 +474,7 @@ function renderHealth() {
   const parts = [];
   if (h.weather) parts.push('天气 ' + mark(h.weather.state));
   if (h.workbuddy) parts.push('看板 ' + mark(h.workbuddy.state));
+  if (h.workbench) parts.push('工作台 ' + mark(h.workbench.state));
 
   const seen = meta && meta.kindle_seen;
   if (seen) {
@@ -558,6 +559,9 @@ const OPTIONAL_LABELS = {
   'workbuddy.models': '模型消耗 · 精简',
   'workbuddy.usage': '模型消耗 · 总量',
   'workbuddy.models_detail': '模型消耗 · 详细',
+  'projects.summary': '项目视图（按项目聚合）',
+  'workbench.status': '工作台摘要（文本）',
+  'workbench.k3b': '工作台 K3-B 重墨副屏',
 };
 
 const OPTIONAL_HINTS = {
@@ -565,6 +569,9 @@ const OPTIONAL_HINTS = {
   'workbuddy.models': '需要自建网关，并在 secrets 里设置密码。',
   'workbuddy.usage': '需要自建网关，并在 secrets 里设置密码。',
   'workbuddy.models_detail': '需要自建网关，并在 secrets 里设置密码。',
+  'projects.summary': '按项目汇总活跃与空闲 Agent。',
+  'workbench.status': '需要本机工作台（127.0.0.1:8799）运行。',
+  'workbench.k3b': '需要本机工作台（127.0.0.1:8799）运行，建议全画布独立一页。',
 };
 
 function renderOptional() {

@@ -55,13 +55,16 @@ def _read_summary(path: Path) -> dict:
     cached = _codex_cache.get("value")
     if _codex_cache.get("key") == key and isinstance(cached, dict):
         return cached
-    summary: dict[str, Any] = {"last_start": None, "last_complete": None}
+    summary: dict[str, Any] = {"last_start": None, "last_complete": None, "cwd": None}
     for event in _iter_lines(path):
         if not isinstance(event, dict):
             continue
         payload = event.get("payload")
         if not isinstance(payload, dict):
             continue
+        # 会话自己记着「在哪个目录跑的」，比全局状态可靠
+        if not summary["cwd"] and payload.get("cwd"):
+            summary["cwd"] = str(payload["cwd"])
         kind = payload.get("type")
         if kind == "task_started":
             summary["last_start"] = {"started_at": payload.get("started_at", 0)}
@@ -69,7 +72,7 @@ def _read_summary(path: Path) -> dict:
             summary["last_complete"] = {"started_at": payload.get("started_at", 0),
                                         "error": bool(payload.get("error"))}
     # 没解析到任何事件（如 zstd 缺失）不缓存，装上工具后下次采集能自愈
-    if summary["last_start"] or summary["last_complete"]:
+    if summary["last_start"] or summary["last_complete"] or summary["cwd"]:
         _codex_cache.update({"key": key, "value": summary})
     return summary
 
@@ -94,7 +97,7 @@ def state() -> AgentState:
     last_complete = summary["last_complete"]
 
     out.last_activity = touched
-    out.project = _active_workspace()
+    out.project = _project_name(summary.get("cwd")) or _active_workspace()
 
     if last_start and (not last_complete or
                        last_start.get("started_at", 0) > last_complete.get("started_at", 0)):

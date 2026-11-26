@@ -32,8 +32,10 @@ else
     (cd "$DIST" && shasum -a 256 kindlehub.sh > kindlehub.sh.sha256)
 fi
 
-# relay.conf 由 settings.relay 推导，避免与真实路径漂移（改路径后 Kindle 局域网自动跟上）。
-# 启用且路径不可猜测时写 RELAY_URL；否则删除 relay.conf（停用跨网兜底）。
+# relay.conf 由 settings.relay 推导，单独保存在 .state/relay.conf（0600），
+# 绝不放进对 0.0.0.0:8792 开放的分发目录以免同网段设备读取 capability URL。
+# 同时主动清理历史上遗留的 $DIST/relay.conf。
+rm -f "$DIST/relay.conf"
 PY="$ROOT/.venv/bin/python"; [ -x "$PY" ] || PY=python3
 STATE="${KINDLE_DASHBOARD_STATE:-$ROOT/.state/kt2.json}"
 RELAY_URL="$("$PY" - "$ROOT" "$STATE" <<'PYEOF'
@@ -50,10 +52,11 @@ except Exception:
 PYEOF
 )"
 if [ -n "$RELAY_URL" ]; then
-    printf '# KindleHub 跨网络中继配置\n# 有这个文件就启用固定 URL 兜底；删除即停用（不用插 USB）\nRELAY_URL="%s"\n' "$RELAY_URL" > "$DIST/relay.conf"
-    chmod 600 "$DIST/relay.conf"
+    mkdir -p "$ROOT/.state"
+    printf '# KindleHub 跨网络中继配置\n# 本机安全留档（0600）；跨网使用请手动写入 Kindle 本地 kindlehub.conf\nRELAY_URL="%s"\n' "$RELAY_URL" > "$ROOT/.state/relay.conf"
+    chmod 600 "$ROOT/.state/relay.conf"
 else
-    rm -f "$DIST/relay.conf"
+    rm -f "$ROOT/.state/relay.conf"
 fi
 echo "已发布 ${version}："
 ls -l "$DIST"

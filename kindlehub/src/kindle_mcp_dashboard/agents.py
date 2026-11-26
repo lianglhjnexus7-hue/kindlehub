@@ -189,17 +189,27 @@ def _tail_zstd_lines(path: Path, limit: int = 400) -> list[dict]:
 
 
 def _project_name(path: str | None) -> str | None:
-    """两种来源都要处理：
-    - 普通路径 <HOME>/.../quant
-    - 目录名编码 --Users-alice-Projects-kindle~0020dashboard--
+    """从路径或编码目录名取项目名。
+
+    - 普通路径 <HOME>/.../quant → quant
+    - 编码目录名 --Users-alice-Projects-kindle~0020dashboard-- → kindle dashboard
+    - 临时目录 / 工作树（kb-author-xxx.NamYOZ、/tmp/...）→ None
+      宁可空着，也不拿临时目录名冒充项目名。
     """
     if not path:
         return None
     cleaned = path.replace("~0020", " ").replace("\\", "/").strip("-")
-    if "/" in cleaned:
-        return cleaned.rsplit("/", 1)[-1] or None
-    parts = [p for p in cleaned.split("-") if p]
-    return parts[-1] if parts else None
+    name = cleaned.rsplit("/", 1)[-1] if "/" in cleaned else cleaned
+    stripped = re.sub(r"\.[A-Za-z0-9]{5,8}$", "", name)
+    if (cleaned.startswith(("/tmp", "/private/tmp", "/var/folders"))
+            or re.match(r"^(kb-author|scratch|worktree|tmp)[-_]", stripped, re.I)):
+        return None
+    if stripped != name:          # 带随机后缀 = 临时工作树
+        return None
+    if "/" not in cleaned and cleaned.startswith("Users-"):   # 编码目录名
+        parts = [x for x in stripped.split("-") if x]
+        return parts[-1] if parts else None
+    return name or None
 
 
 _MD = re.compile(r"(\*\*|__|`|^#+\s*|^[-*]\s+)")

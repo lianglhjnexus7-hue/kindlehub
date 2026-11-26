@@ -22,11 +22,11 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-from . import agents, secrets, weather, workbuddy
+from . import agents, secrets, weather, workbuddy, workbench
 from .defaults import DEVICE_PROFILES, OPTIONAL_REGIONS
 from .renderer import render_png
 from .schema import KINDS, DashboardError, validate_dashboard
-from .sources import health_summary, snapshot
+from .sources import active_sources, health_summary, snapshot
 from .store import DashboardStore
 
 WARM_INTERVAL = 60   # 后台采集间隔（秒）：Agent 状态分钟级就够，屏幕也 60 秒一刷
@@ -45,8 +45,14 @@ _device_reports: list[dict[str, Any]] = []
 _PIXEL_GIF = (b"GIF89a\x01\x00\x01\x00\x80\x00\x00\x00\x00\x00"
               b"\xff\xff\xff!\xf9\x04\x01\x00\x00\x00\x00,\x00"
               b"\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02D\x01\x00;")
-# Kindle 最后一次拉图的时间，用于判断设备是否还在线
-_last_seen: dict[str, float | str | None] = {"at": None, "ip": None}
+# Kindle 最后一次拉图的时间与设备遥测，用于判断设备是否在线及给工作台展示
+_last_seen: dict[str, Any] = {
+    "at": None,
+    "ip": None,
+    "battery": None,
+    "charging": None,
+    "client_version": None,
+}
 _last_visitor: dict[str, float | str | None] = {"at": None, "ip": None}
 STATIC_DIR = Path(__file__).parent / "static"
 STATIC_FILES = {"admin.js", "admin.css"}
@@ -112,6 +118,15 @@ _relay_state: dict = {"at": 0.0, "last": ""}
 RELAY_INTERVAL = 300       # GitHub raw 的 CDN max-age=300，发更勤也没用
 
 
+def relay_status_label(settings: dict[str, Any] | None = None) -> str:
+    """供屏幕健康栏展示的中继状态短文案。"""
+    relay_cfg = (settings or {}).get("relay") or {}
+    if not relay_cfg.get("enabled"):
+        return "本机直连"
+    last = str(_relay_state.get("last") or "")
+    return "中继异常" if "失败" in last else "中继正常"
+
+
 def _publish_relay(store: DashboardStore) -> None:
     """把当前这一帧推到固定 URL，供 Kindle 在跨网络时兜底拉取。
 
@@ -156,21 +171,29 @@ def _publish_relay(store: DashboardStore) -> None:
 
 
 def _warm_once(store: DashboardStore) -> None:
-    """预热所有外部数据源。任何一个失败都不影响其余。
+    """按当前激活屏幕的引用按需预热外部数据源。任何一个失败都不影响其余。
 
     每分钟采一次，与 Kindle 的刷新周期解耦——屏幕即便 10 分钟才重载，
     拿到的仍是 1 分钟内的真实状态。缓存自身的 TTL 不被这里的调用击穿。
     """
     try:
-        settings = store.read().get("settings") or {}
+        data = store.read()
+        settings = data.get("settings") or {}
     except Exception:
         return
-    for job in (
-        lambda: agents.collect(settings, force=True),
-        lambda: weather.current(settings.get("weather") or {}, fetch=True, force=True),
-        lambda: workbuddy.current(settings, fetch=True, force=True),
-        lambda: workbuddy.models(settings, fetch=True, force=True),
-    ):
+    needed = active_sources(data)
+    jobs = [lambda: weather.current(settings.get("weather") or {}, fetch=True, force=True)]
+    if needed & {"agents.summary", "projects.summary", "system.health"}:
+        jobs.append(lambda: agents.collect(settings, force=True))
+    if "workbuddy.usage" in needed:
+        jobs.append(lambda: workbuddy.current(settings, fetch=True, force=True))
+    if needed & {"workbuddy.models", "workbuddy.models_detail"}:
+        jobs.append(lambda: workbuddy.models(settings, fetch=True, force=True))
+    if "workbench.k3b" in needed and (settings.get("workbuddy") or {}).get("enabled", False):
+        jobs.append(lambda: workbuddy.credits(settings, fetch=True, force=True, include_today=False))
+    if needed & {"workbench.status", "workbench.k3b"}:
+        jobs.append(lambda: workbench.snapshot_data(settings, fetch=True, force=True))
+    for job in jobs:
         try:
             job()
         except Exception:
@@ -215,15 +238,9 @@ def make_server(host: str = "0.0.0.0", port: int = 8787, refresh: int = 60,
                 body = _page(state.get("refresh_seconds", refresh), state["device"]).encode()
                 self._send(HTTPStatus.OK, "text/html; charset=utf-8", body)
             elif path == "/screen.png":
-                if self.client_address[0] not in LOOPBACK:
-                    _ua = (self.headers.get("User-Agent") or "")
-                    if "kindle" in _ua.lower():
-                        _last_seen.update({"at": time.time(), "ip": self.client_address[0]})
-                    else:
-                        _last_visitor.update({"at": time.time(), "ip": self.client_address[0]})
-                # Kindle 端通过 batt/chg 传电量，用于自绘状态栏
+                # Kindle 端通过 batt/chg/v 传电量与脚本版本，用于自绘状态栏与设备遥测
                 q = urllib.parse.parse_qs(urlparse(self.path).query)
-                extra = {}
+                extra: dict[str, Any] = {}
                 batt = (q.get("batt") or [""])[0]
                 # isdigit() 会放行 "²" 这类 Unicode 数字而 int() 拒收；
                 # 超长数字串还会撞上 int 的位数上限，电量最多三位
@@ -234,6 +251,19 @@ def make_server(host: str = "0.0.0.0", port: int = 8787, refresh: int = 60,
                 ver = (q.get("v") or [""])[0]
                 if ver and len(ver) <= 16 and ver.isascii() and all(c.isdigit() or c == "." for c in ver):
                     extra["system.client_version"] = ver
+                if self.client_address[0] not in LOOPBACK:
+                    _ua = (self.headers.get("User-Agent") or "")
+                    has_device_params = "batt" in q or "chg" in q or "v" in q
+                    if "kindle" in _ua.lower() or has_device_params:
+                        _last_seen["at"] = time.time()
+                        _last_seen["ip"] = self.client_address[0]
+                        if "system.battery" in extra:
+                            _last_seen["battery"] = extra["system.battery"]
+                            _last_seen["charging"] = extra["system.charging"]
+                        if "system.client_version" in extra:
+                            _last_seen["client_version"] = extra["system.client_version"]
+                    else:
+                        _last_visitor.update({"at": time.time(), "ip": self.client_address[0]})
                 draw_bar = (q.get("bar") or ["1"])[0] not in {"0", "false"}
                 # 局部刷新（JS）带 _= 序号参数，明确要求新图；
                 # 整页重载不带，仍走 45 秒渲染缓存。
@@ -314,10 +344,17 @@ def make_server(host: str = "0.0.0.0", port: int = 8787, refresh: int = 60,
                         "seconds_ago": (round(time.time() - _last_seen["at"])
                                         if _last_seen["at"] else None),
                         "ip": _last_seen["ip"],
+                        "battery": _last_seen["battery"],
+                        "charging": _last_seen["charging"],
+                        "client_version": _last_seen["client_version"],
                     },
+                    "battery": _last_seen["battery"],
+                    "charging": _last_seen["charging"],
+                    "client_version": _last_seen["client_version"],
                     "health": {
                         "weather": weather.status(),
                         "workbuddy": workbuddy.status(),
+                        "workbench": workbench.status(),
                     },
                     "secrets_set": {
                         "workbuddy_password": bool(secrets.get("workbuddy_password")),
@@ -325,6 +362,7 @@ def make_server(host: str = "0.0.0.0", port: int = 8787, refresh: int = 60,
                     "sources": [
                         {"id": "system.time", "label": "本地时间"},
                         {"id": "system.date", "label": "日期"},
+                        {"id": "system.clock", "label": "时间与日期"},
                         {"id": "system.hostname", "label": "主机名"},
                         {"id": "system.cpu_percent", "label": "CPU 占用"},
                         {"id": "system.memory_percent", "label": "内存占用"},
@@ -335,7 +373,10 @@ def make_server(host: str = "0.0.0.0", port: int = 8787, refresh: int = 60,
                         {"id": "workbuddy.usage", "label": "WorkBuddy 用量总量"},
                         {"id": "workbuddy.models", "label": "模型消耗（精简）"},
                         {"id": "workbuddy.models_detail", "label": "模型消耗（详细）"},
+                        {"id": "workbench.status", "label": "工作台摘要（文本）"},
+                        {"id": "workbench.k3b", "label": "工作台 K3-B 副屏"},
                         {"id": "agents.summary", "label": "Agent 监控"},
+                        {"id": "projects.summary", "label": "项目视图"},
                         {"id": "system.health", "label": "数据健康摘要"},
                     ],
                     # 可选模块：依赖外部服务，供后台一键添加
@@ -426,17 +467,18 @@ def make_server(host: str = "0.0.0.0", port: int = 8787, refresh: int = 60,
             """
             try:
                 data = store.read()
+                needed = active_sources(data)
+                if draw_bar and int((data.get("device") or {}).get("top_inset") or 0) > 0:
+                    needed.add("weather.current")
+                live = snapshot(data.get("settings"), fetch=False, needed=needed)
                 if extra:
-                    live = snapshot(data.get("settings"), fetch=False)
                     live.update(extra)
                     # 版本号拼在健康栏末尾，屏幕上直接显示设备跑的是哪个版本
                     ver = str(extra.get("system.client_version") or "")
-                    if ver:
+                    if ver and "system.health" in needed:
                         live["system.health"] = health_summary(
                             data.get("settings"), client_version=ver)
-                    png = render_png(data, live, fetch=False, draw_bar=draw_bar)
-                else:
-                    png = render_png(data, fetch=False, draw_bar=draw_bar)
+                png = render_png(data, live, fetch=False, draw_bar=draw_bar)
             except Exception as exc:  # noqa: BLE001
                 print(f"渲染失败: {type(exc).__name__}: {exc}", flush=True)
                 if _last_png["data"]:

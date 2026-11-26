@@ -67,6 +67,7 @@ def test_antigravity_never_claims_certainty(tmp_path, monkeypatch):
     (root / "conversations").mkdir(parents=True)
     (root / "conversations" / "a.db").write_bytes(b"x")
     monkeypatch.setattr(antigravity, "GEMINI_ROOT", tmp_path / ".gemini")
+    monkeypatch.setattr(antigravity, "T3_ANTIGRAVITY_ROOT", tmp_path / ".t3_missing")
     st = antigravity.state()
     assert st.status == "running"
     assert st.confidence == "low"      # 没有生命周期事件，永远只是推测
@@ -204,11 +205,31 @@ def test_antigravity_scans_ide_variant(tmp_path, monkeypatch):
     (root / "conversations").mkdir(parents=True)
     (root / "conversations" / "a.db").write_bytes(b"x")
     monkeypatch.setattr(antigravity, "GEMINI_ROOT", tmp_path / ".gemini")
+    monkeypatch.setattr(antigravity, "T3_ANTIGRAVITY_ROOT", tmp_path / ".t3_missing")
     files = antigravity._candidate_files()
     assert any("antigravity-ide" in str(f) for f in files)
     st = antigravity.state()
     assert st.status == "running"
     assert st.task is None
+
+
+def test_antigravity_scans_t3_brain_transcript_without_reading_content(tmp_path, monkeypatch):
+    """T3 Code 托管下的 Antigravity 转录位于 brain/<id>/.system_generated/logs/，只读 mtime 不读正文。"""
+    from kindle_mcp_dashboard.plugins import antigravity
+    gemini_missing = tmp_path / ".gemini"
+    t3_root = tmp_path / ".t3" / "userdata" / "providers" / "antigravity"
+    transcript = t3_root / "hash1" / "antigravity-acp" / "brain" / "conv1" / ".system_generated" / "logs" / "transcript.jsonl"
+    transcript.parent.mkdir(parents=True)
+    transcript.write_text('{"secret_prompt": "绝不能上墙"}\n', encoding="utf-8")
+    monkeypatch.setattr(antigravity, "GEMINI_ROOT", gemini_missing)
+    monkeypatch.setattr(antigravity, "T3_ANTIGRAVITY_ROOT", t3_root)
+    files = antigravity._candidate_files()
+    assert transcript in files
+    st = antigravity.state()
+    assert st.status == "running"
+    assert st.confidence == "low"
+    assert st.task is None
+    assert "绝不能上墙" not in st.basis
 
 
 def test_tail_lines_boundary_does_not_drop_whole_line(tmp_path, monkeypatch):

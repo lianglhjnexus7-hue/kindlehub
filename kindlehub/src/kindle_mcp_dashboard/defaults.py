@@ -13,6 +13,9 @@
 """
 from __future__ import annotations
 
+from copy import deepcopy
+from typing import Any
+
 CANVAS_WIDTH = 1000
 
 DEVICE_PROFILES = {
@@ -60,7 +63,31 @@ OPTIONAL_REGIONS = {
         "id": "wb-detail", "kind": "text", "x": 20, "y": 840, "w": 960, "h": 390,
         "label": "模型消耗 · 详细", "source": "workbuddy.models_detail", "size": 16,
     },
+    "workbench.status": {
+        "id": "workbench", "kind": "text", "x": 20, "y": 904, "w": 960, "h": 196,
+        "label": "工作台", "source": "workbench.status", "size": 17,
+    },
+    "workbench.k3b": {
+        "id": "workbench-k3b", "kind": "k3b", "x": 0, "y": 0, "w": 1000, "h": 1266,
+        "label": "", "border": False, "source": "workbench.k3b",
+    },
 }
+
+WORKBENCH_K3B_REGION = OPTIONAL_REGIONS["workbench.k3b"]
+
+
+def build_k3b_dashboard(base: dict[str, Any] | None = None) -> dict[str, Any]:
+    """构建 K3-B（黑条双层框重墨版）工作台副屏预设，保留现有 settings 与 device。"""
+    data = deepcopy(base if base is not None else DEFAULT_DASHBOARD)
+    device = data.setdefault("device", dict(DEVICE_PROFILES[DEFAULT_DEVICE]))
+    width = int(device.get("width") or 600)
+    height = int(device.get("height") or 800)
+    inset = int(device.get("top_inset") or 0)
+    region = deepcopy(WORKBENCH_K3B_REGION)
+    region["h"] = max(100, int(CANVAS_WIDTH * max(1, height - inset) / max(1, width)))
+    data["active_screen"] = "overview"
+    data["screens"] = [{"id": "overview", "name": "工作台副屏", "regions": [region]}]
+    return data
 
 DEFAULT_DASHBOARD = {
     "version": 1,

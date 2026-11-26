@@ -147,7 +147,7 @@ def test_meta_exposes_health_and_lan_ip(server):
     data = json.loads(body)
     assert status == 200
     assert "lan_ip" in data and "port" in data
-    assert set(data["health"]) == {"weather", "workbuddy"}
+    assert set(data["health"]) == {"weather", "workbuddy", "workbench"}
     assert data["secrets_set"]["workbuddy_password"] is False
 
 
@@ -533,3 +533,44 @@ def test_relay_publish_creates_branch_on_404(monkeypatch):
     commits = [b for (m, u, b) in calls if u.endswith("/git/commits")]
     assert "parents" not in commits[0]
     assert any(m == "POST" and u.endswith("/git/refs") for (m, u, b) in calls)
+
+
+def test_screen_png_updates_kindle_seen_from_direct_script_params(server, monkeypatch):
+    """越狱直写脚本（BusyBox wget，UA 不含 kindle）靠 batt=/chg=/v= 也必须刷新 kindle_seen 与顶层遥测。"""
+    from kindle_mcp_dashboard import web
+    monkeypatch.setattr(web, "_last_seen", {
+        "at": None, "ip": None, "battery": None, "charging": None, "client_version": None,
+    })
+    with monkeypatch.context() as ctx:
+        ctx.setattr(web, "LOOPBACK", set())
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{server}/screen.png?batt=88&chg=1&v=1.13.1",
+            headers={"User-Agent": "Wget/1.21"},
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            assert resp.status == 200
+            assert resp.read().startswith(b"\x89PNG")
+
+    status, body, _ = get(server, "/api/meta")
+    assert status == 200
+    meta = json.loads(body)
+    assert meta["kindle_seen"]["seconds_ago"] is not None
+    assert meta["kindle_seen"]["ip"] == "127.0.0.1"
+    assert meta["kindle_seen"]["battery"] == 88
+    assert meta["kindle_seen"]["charging"] is True
+    assert meta["kindle_seen"]["client_version"] == "1.13.1"
+    assert meta["battery"] == 88
+    assert meta["charging"] is True
+    assert meta["client_version"] == "1.13.1"
+
+
+def test_put_and_preview_reject_non_object_workbench_settings(server):
+    """settings.workbench 非对象时必须在边界返回 400，避免消费端 .get 抛 AttributeError。"""
+    bad = json.loads(json.dumps(DEFAULT_DASHBOARD))
+    bad.setdefault("settings", {})["workbench"] = "http://127.0.0.1:8799"
+    s1, b1 = send(server, "/api/state", "PUT", bad)
+    assert s1 == 400
+    assert "workbench" in json.loads(b1)["error"]
+    s2, b2 = send(server, "/api/preview", "POST", bad)
+    assert s2 == 400
+    assert "workbench" in json.loads(b2)["error"]

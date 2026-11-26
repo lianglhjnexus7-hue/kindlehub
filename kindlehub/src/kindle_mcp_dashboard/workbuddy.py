@@ -106,7 +106,7 @@ def status() -> dict[str, Any]:
     return {"state": "ok" if age < TTL else "stale", "age": age}
 
 
-_credits_cache: dict[str, Any] = {"key": None, "at": -1e9, "data": None}
+_credits_cache: dict[str, Any] = {"key": None, "at": -1e9, "data": None, "has_today": False}
 
 REALM_CN = {"cn": "国内", "intl": "国际", "all": "全部", "unknown": "未知"}
 
@@ -120,13 +120,17 @@ RANGE_CN = {
 }
 
 
-def credits(settings: dict[str, Any], fetch: bool = True, force: bool = False) -> dict | None:
+def credits(settings: dict[str, Any], fetch: bool = True, force: bool = False,
+            include_today: bool = True) -> dict | None:
     """汇总账号池的积分余额。
 
     /accounts 的每条记录里 credits.remain / credits.size 是积分余额与总额。
     只取这两个数字求和，账号 uid、昵称、凭证文件名一律不读。
+    include_today=False 时跳过各区域的 140KB /usage/analytics 请求（供 K3-B 轻量拼装用）。
     """
     config = settings.get("workbuddy") or {}
+    if not config.get("enabled", True):
+        return None
     base = str(config.get("url") or DEFAULT_URL)
     span = str(config.get("range") or DEFAULT_RANGE)
     key = f"{base}|{span}"
@@ -135,11 +139,13 @@ def credits(settings: dict[str, Any], fetch: bool = True, force: bool = False) -
         return None
     # force=True 只跳过"未过期就复用"，不跳过"过期后先用旧数据"——
     # 预热循环每 60 秒强制跑一次，若这里也直连，等于把 TTL 击穿成 60 秒。
+    has_today = bool(_credits_cache.get("has_today", False))
+    cache_satisfies = not include_today or has_today
     if (_credits_cache["key"] == key and _credits_cache["data"] is not None
-            and now - _credits_cache["at"] < TTL):
+            and cache_satisfies and now - _credits_cache["at"] < TTL):
         return _credits_cache["data"]
     if not fetch:
-        return _credits_cache["data"] if _credits_cache["key"] == key else None
+        return _credits_cache["data"] if (_credits_cache["key"] == key and cache_satisfies) else None
 
     password = secrets.get("workbuddy_password")
     if not password:
@@ -150,7 +156,7 @@ def credits(settings: dict[str, Any], fetch: bool = True, force: bool = False) -
     try:
         payload = _request(f"{base.rstrip('/')}/accounts?realm=all", token=token)
     except Exception:
-        return _credits_cache["data"] if _credits_cache["key"] == key else None
+        return _credits_cache["data"] if (_credits_cache["key"] == key and cache_satisfies) else None
 
     # 国际版与国内版是两套账号池，积分不能混算。
     # 畸形响应（payload 非 dict、accounts 非列表、account 非 dict）只返回 None，
@@ -172,21 +178,22 @@ def credits(settings: dict[str, Any], fetch: bool = True, force: bool = False) -
         if not by_realm:
             return None
 
-        # 各区域的今日消耗。/usage/analytics 支持 realm 参数，
-        # 但返回体 ~140KB，所以只对实际存在的区域各取一次，并跟随 2 分钟缓存。
-        for realm in list(by_realm):
-            try:
-                payload = _request(
-                    f"{base.rstrip('/')}/usage/analytics?range={span}&realm={realm}", token=token)
-                window = (payload.get("summary") or {}).get("window") or {}
-                by_realm[realm]["today_credit"] = float(window.get("credit") or 0.0)
-                by_realm[realm]["today_cost"] = float(window.get("cost_cny") or 0.0)
-            except Exception:
-                by_realm[realm]["today_credit"] = None
-                by_realm[realm]["today_cost"] = None
+        if include_today:
+            # 各区域的今日消耗。/usage/analytics 支持 realm 参数，
+            # 但返回体 ~140KB，所以只对实际存在的区域各取一次，并跟随 2 分钟缓存。
+            for realm in list(by_realm):
+                try:
+                    payload = _request(
+                        f"{base.rstrip('/')}/usage/analytics?range={span}&realm={realm}", token=token)
+                    window = (payload.get("summary") or {}).get("window") or {}
+                    by_realm[realm]["today_credit"] = float(window.get("credit") or 0.0)
+                    by_realm[realm]["today_cost"] = float(window.get("cost_cny") or 0.0)
+                except Exception:
+                    by_realm[realm]["today_credit"] = None
+                    by_realm[realm]["today_cost"] = None
 
         result = {"realms": by_realm}
-        _credits_cache.update({"key": key, "at": now, "data": result})
+        _credits_cache.update({"key": key, "at": now, "data": result, "has_today": include_today})
         return result
     except Exception:
         return None

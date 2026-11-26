@@ -16,7 +16,7 @@ CANVAS_WIDTH = 1000
 # 巨大正整数就能抛 MemoryError 甚至 OOM 杀进程；4096² 仅约 16.7MB，安全。
 MAX_DEVICE_DIM = 4096
 # 有序 list（不是 set）：渲染器按这个顺序处理，后台下拉框也按这个顺序展示
-KINDS = ["text", "metric", "status", "progress", "list", "image"]
+KINDS = ["text", "metric", "status", "progress", "list", "image", "k3b"]
 
 
 class DashboardError(ValueError):
@@ -61,11 +61,10 @@ def validate_dashboard(value: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(settings, dict):
         raise DashboardError("settings must be an object")
     data["settings"] = settings
-    # weather/workbuddy/relay 子配置被消费端当对象 .get（weather.current、
-    # workbuddy.current、health_summary、/api/meta 的 relay_cfg）；非 dict 真值会抛
-    # AttributeError，而 render_png 与 /api/meta 都没有兜底，会直接丢连接。
+    # weather/workbuddy/relay/workbench 子配置被消费端当对象 .get；非 dict 真值会抛
+    # AttributeError，而 render_png 与 /api/meta 没有兜底，会直接丢连接。
     # None 由消费端的 `or {}` 安全归空，放行。
-    for key in ("weather", "workbuddy", "relay"):
+    for key in ("weather", "workbuddy", "relay", "workbench"):
         sub = settings.get(key)
         if sub is not None and not isinstance(sub, dict):
             raise DashboardError(f"settings.{key} must be an object")

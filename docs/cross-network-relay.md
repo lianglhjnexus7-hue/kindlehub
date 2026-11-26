@@ -54,12 +54,12 @@ main 的发布历史。服务端每 300 秒（对齐 GitHub raw 的 `max-age=300
 
 ### 2. Kindle 端
 
-`deploy/publish-kindle.sh` 会按 `settings.relay` 自动生成 `kindlehub-dist/relay.conf`
-（含当前随机路径的 RELAY_URL）；路径迁移后它随之更新，不会与真实路径漂移。
+`deploy/publish-kindle.sh` 会按 `settings.relay` 把当前随机路径的 `RELAY_URL`
+生成到本机私密目录 `.state/relay.conf`（权限 `0600`，同时清理 `kindlehub-dist/relay.conf`，
+不在对局域网 `0.0.0.0:8792` 开放的分发目录明文暴露 capability URL）。
 
-- **局域网**：Kindle 本地 conf 的 `RELAY_URL` 留空即可，脚本自动从分发服务
-  （8792 端口）拉 `relay.conf` 拿最新 URL，改路径不用插 USB。
-- **跨网络**：Kindle 够不到分发服务，需把随机路径写死进
+- **局域网**：默认直接走 LAN 直连，不需要中继兜底。
+- **跨网络**：把 `.state/relay.conf` 里的配置写入 Kindle 的
   `/mnt/us/extensions/kindlehub/kindlehub.conf`（USB 挂载改一次）：
 
 ```sh

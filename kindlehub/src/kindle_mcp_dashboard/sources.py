@@ -14,7 +14,7 @@ from typing import Any
 
 import psutil
 
-from . import agents, weather, workbuddy
+from . import agents, weather, workbench, workbuddy
 
 _WEEKDAYS = ("周一", "周二", "周三", "周四", "周五", "周六", "周日")
 
@@ -33,33 +33,93 @@ def _cpu_percent() -> int:
     return round(_cpu_cache["value"])
 
 
-def snapshot(settings: dict[str, Any] | None = None, fetch: bool = True) -> dict[str, Any]:
+def active_sources(data: dict[str, Any]) -> set[str]:
+    """返回当前激活屏幕上实际引用的非空数据源集合。"""
+    screens = data.get("screens") or []
+    active_id = data.get("active_screen")
+    screen = next((s for s in screens if isinstance(s, dict) and s.get("id") == active_id), None)
+    if not screen:
+        return set()
+    return {
+        str(region["source"])
+        for region in (screen.get("regions") or [])
+        if isinstance(region, dict) and isinstance(region.get("source"), str) and region.get("source")
+    }
+
+
+def _relay_status(settings: dict[str, Any]) -> str:
+    relay_cfg = settings.get("relay") or {}
+    if not relay_cfg.get("enabled"):
+        return "本机直连"
+    from . import web
+    return web.relay_status_label(settings)
+
+
+def snapshot(settings: dict[str, Any] | None = None, fetch: bool = True,
+             needed: set[str] | None = None) -> dict[str, Any]:
+    """采集实时数据源；传入 needed 时只采当前布局用到的源，避免重复扫盘与无谓联网。"""
     now = dt.datetime.now().astimezone()
     settings = settings or {}
-    # 只采集一次，两个视图（按 Agent / 按项目）与健康摘要共用，
-    # 避免同一轮渲染把会话目录扫两遍。collect 自身另有 15 秒缓存。
-    agent_rows = agents.collect(settings)
-    return {
+    want_all = needed is None
+
+    def want(*keys: str) -> bool:
+        return want_all or bool(needed and needed.intersection(keys))
+
+    values: dict[str, Any] = {
         "system.time": now.strftime("%H:%M"),
         "system.date": f"{_WEEKDAYS[now.weekday()]}\n{now.month}月{now.day}日",
         # 时间与日期合成一个源，供"首行大字 + 次行小字"的卡片使用
         "system.clock": f"{now.strftime('%H:%M')}\n{_WEEKDAYS[now.weekday()]} {now.month}月{now.day}日",
         "system.hostname": platform.node(),
-        "system.cpu_percent": _cpu_percent(),
-        "system.memory_percent": round(psutil.virtual_memory().percent),
-        "system.disk_percent": round(psutil.disk_usage(Path.home()).percent),
-        "system.load": round(psutil.getloadavg()[0], 2),
-        "system.uptime": _duration(dt.timedelta(seconds=int(dt.datetime.now().timestamp() - psutil.boot_time()))),
-        # 外部数据源；失败时 weather 模块返回"未知"，不伪造
-        "weather.current": weather.current(settings.get("weather") or {}, fetch=fetch),
-        "workbuddy.usage": workbuddy.current(settings, fetch=fetch),
-        "workbuddy.models": workbuddy.models(settings, fetch=fetch),
-        "workbuddy.models_detail": workbuddy.models_detail(settings, fetch=fetch),
-        "agents.summary": agents.format_rows(agent_rows),
-        "projects.summary": agents.format_by_project(agent_rows),
-        # 数据健康摘要：让屏幕能自证新鲜度，采集失败时明说
-        "system.health": health_summary(settings, agent_rows=agent_rows),
     }
+    if want("system.cpu_percent"):
+        values["system.cpu_percent"] = _cpu_percent()
+    if want("system.memory_percent"):
+        values["system.memory_percent"] = round(psutil.virtual_memory().percent)
+    if want("system.disk_percent"):
+        values["system.disk_percent"] = round(psutil.disk_usage(Path.home()).percent)
+    if want("system.load"):
+        values["system.load"] = round(psutil.getloadavg()[0], 2)
+    if want("system.uptime"):
+        values["system.uptime"] = _duration(
+            dt.timedelta(seconds=int(dt.datetime.now().timestamp() - psutil.boot_time())))
+
+    if want("weather.current", "workbench.k3b"):
+        values["weather.current"] = weather.current(settings.get("weather") or {}, fetch=fetch)
+    if want("workbuddy.usage"):
+        values["workbuddy.usage"] = workbuddy.current(settings, fetch=fetch)
+    if want("workbuddy.models"):
+        values["workbuddy.models"] = workbuddy.models(settings, fetch=fetch)
+    if want("workbuddy.models_detail"):
+        values["workbuddy.models_detail"] = workbuddy.models_detail(settings, fetch=fetch)
+    if want("workbench.status"):
+        values["workbench.status"] = workbench.summary(settings, fetch=fetch)
+    if want("workbench.k3b"):
+        wb_cfg = settings.get("workbuddy") or {}
+        wb_credits = (
+            workbuddy.credits(settings, fetch=fetch, include_today=False)
+            if wb_cfg.get("enabled", False)
+            else None
+        )
+        values["workbench.k3b"] = {
+            "summary": workbench.snapshot_data(settings, fetch=fetch),
+            "credits": wb_credits,
+            "weather_city": str((settings.get("weather") or {}).get("city") or "").strip(),
+            "relay_status": _relay_status(settings),
+        }
+
+    if want("agents.summary", "projects.summary", "system.health"):
+        # 只采集一次，两个视图（按 Agent / 按项目）与健康摘要共用，
+        # 避免同一轮渲染把会话目录扫两遍。collect 自身另有 15 秒缓存。
+        agent_rows = agents.collect(settings)
+        if want("agents.summary"):
+            values["agents.summary"] = agents.format_rows(agent_rows)
+        if want("projects.summary"):
+            values["projects.summary"] = agents.format_by_project(agent_rows)
+        if want("system.health"):
+            values["system.health"] = health_summary(settings, agent_rows=agent_rows)
+
+    return values
 
 
 def health_summary(settings: dict[str, Any] | None = None,

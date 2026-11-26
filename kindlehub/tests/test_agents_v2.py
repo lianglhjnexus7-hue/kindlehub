@@ -356,6 +356,7 @@ def test_antigravity_prunes_node_modules(tmp_path, monkeypatch):
     junk.mkdir(parents=True)
     (junk / "b.db").write_bytes(b"x")
     monkeypatch.setattr(antigravity, "GEMINI_ROOT", tmp_path / ".gemini")
+    monkeypatch.setattr(antigravity, "T3_ANTIGRAVITY_ROOT", tmp_path / ".t3_missing")
     files = antigravity._candidate_files()
     assert [f.name for f in files] == ["a.db"]
 
